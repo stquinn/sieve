@@ -9,8 +9,23 @@ import (
 
 const libDir = "/vault/library"
 
+// runFor is a run of the CLI dialect under profile, with libDir as its library
+// and a prompt of a background, a brief and its data.
+func runFor(dialect string, profile domain.ContainmentProfile) Run {
+	return Run{
+		CLI: CLI{Binary: dialect, Dialect: dialect},
+		Prompt: Prompt{
+			Background: Layer{Heading: backgroundHeading, Text: "the background"},
+			Brief:      Layer{Heading: briefHeading, Text: "the brief"},
+			Data:       Layer{Heading: dataHeading, Text: "the data"},
+		},
+		Profile:    profile,
+		LibraryDir: libDir,
+	}
+}
+
 func argsFor(cli string) []string {
-	return buildBaseArgs(cli, "", "the prompt", domain.DefaultContainmentProfile(), "", libDir)
+	return runFor(cli, domain.DefaultContainmentProfile()).args()
 }
 
 func hasFlag(args []string, flag string) bool {
@@ -129,10 +144,6 @@ func TestBuildArgs_Agy(t *testing.T) {
 	if flagValue(args, "--mode") != "plan" {
 		t.Errorf("agy --mode = %q, want plan", flagValue(args, "--mode"))
 	}
-	// agy takes the prompt as a trailing arg (does not read stdin).
-	if len(args) < 2 || args[len(args)-2] != "--print" || args[len(args)-1] != "the prompt" {
-		t.Errorf("agy must end with --print <prompt>; got %v", args)
-	}
 	// Renderer returns before any allowlist/MCP logic — agy has no per-tool flag.
 	if hasFlag(args, "--allowedTools") || hasFlag(args, "--allow-tool") {
 		t.Errorf("agy has no per-tool allow flag; got %v", args)
@@ -141,7 +152,9 @@ func TestBuildArgs_Agy(t *testing.T) {
 
 // Model is threaded through when set.
 func TestBuildArgs_Model(t *testing.T) {
-	args := buildBaseArgs("claude", "sonnet", "p", domain.DefaultContainmentProfile(), "", libDir)
+	run := runFor("claude", domain.DefaultContainmentProfile())
+	run.CLI.Model = "sonnet"
+	args := run.args()
 	if flagValue(args, "--model") != "sonnet" {
 		t.Errorf("claude --model = %q, want sonnet; args=%v", flagValue(args, "--model"), args)
 	}
@@ -166,7 +179,7 @@ func TestBuildArgs_DeduplicatesRepeatedGrants(t *testing.T) {
 		{"copilot", []string{"--allow-tool", "--allow-url"}, []string{"--allow-all-urls"}},
 	} {
 		t.Run(tc.dialect, func(t *testing.T) {
-			args := buildBaseArgs(tc.dialect, "", "p", p, "", libDir)
+			args := runFor(tc.dialect, p).args()
 			seen := make(map[string]int)
 			for i, a := range args {
 				for _, flag := range tc.singles {
@@ -207,5 +220,67 @@ func TestExecCLIRunner_ResponseLabelCarriesTheNote(t *testing.T) {
 		if got := (execCLIRunner{}).responseLabel("ask", 12, 34, tc.note); got != tc.want {
 			t.Errorf("%s: label = %q, want %q", tc.name, got, tc.want)
 		}
+	}
+}
+
+// Each backend sends the prompt's layers its own way: claude the system layers
+// as the value of --append-system-prompt and the input layers on STDIN, copilot
+// the whole prompt on STDIN, agy the whole prompt as its trailing argument and
+// nothing on STDIN. No other argument carries any layer.
+func TestRun_EachBackendSendsThePromptItsOwnWay(t *testing.T) {
+	for _, tc := range []struct {
+		dialect string
+		flag    string // the flag whose value is a part of the prompt
+		part    func(Prompt) string
+		stdin   func(Prompt) string
+	}{
+		{"claude", "--append-system-prompt", Prompt.System, Prompt.Input},
+		{"copilot", "", nil, Prompt.String},
+		{"agy", "--print", Prompt.String, func(Prompt) string { return "" }},
+		{"an unknown CLI", "", nil, Prompt.String},
+	} {
+		t.Run(tc.dialect, func(t *testing.T) {
+			run := runFor(tc.dialect, domain.DefaultContainmentProfile())
+			args := run.args()
+			if got, want := run.stdin(), tc.stdin(run.Prompt); got != want {
+				t.Errorf("stdin = %q, want %q", got, want)
+			}
+			if tc.flag != "" && flagValue(args, tc.flag) != tc.part(run.Prompt) {
+				t.Errorf("%s = %q, want %q", tc.flag, flagValue(args, tc.flag), tc.part(run.Prompt))
+			}
+			for i, a := range args {
+				if tc.flag != "" && i > 0 && args[i-1] == tc.flag {
+					continue
+				}
+				for _, layer := range []string{"the background", "the brief", "the data"} {
+					if strings.Contains(a, layer) {
+						t.Errorf("the argument %q carries a layer", a)
+					}
+				}
+			}
+		})
+	}
+}
+
+// A run is logged in three blocks: how the CLI was executed, the layers the
+// framework writes, and the layers that are the task's and the run's. Between
+// them the two prompt blocks hold every layer once, and the command block holds
+// none of the prompt.
+func TestRun_IsLoggedAsCommandFrameworkAndTask(t *testing.T) {
+	run := runFor("claude", domain.DefaultContainmentProfile())
+	command := run.commandLog(run.args())
+	for _, want := range []string{"(model: (default))", "cwd       (process cwd)", "command   claude --print", "--append-system-prompt " + systemPromptStandIn} {
+		if !strings.Contains(command, want) {
+			t.Errorf("the command block lacks %q:\n%s", want, command)
+		}
+	}
+	if strings.Contains(command, "the background") || strings.Contains(command, "the data") {
+		t.Errorf("the command block holds prompt text:\n%s", command)
+	}
+	if got, want := run.Prompt.FrameworkLayers(), "# Sieve\n\nthe background"; got != want {
+		t.Errorf("framework block = %q, want %q", got, want)
+	}
+	if got, want := run.Prompt.TaskLayers(), "# Task\n\nthe brief\n\n# Data\n\nthe data"; got != want {
+		t.Errorf("task block = %q, want %q", got, want)
 	}
 }

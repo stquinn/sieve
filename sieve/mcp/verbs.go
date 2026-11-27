@@ -396,7 +396,10 @@ func (s *Server) fetchPage(ctx context.Context, _ *mcpsdk.CallToolRequest, in Fe
 // as a tool error and writes nothing.
 func (s *Server) addToAnswer(ctx context.Context, _ *mcpsdk.CallToolRequest, in AddToAnswerInput) (*mcpsdk.CallToolResult, AnswerAdded, error) {
 	g, _ := ctx.Value(grantContextKey{}).(*runGrant)
-	if g == nil || !g.exchange.Answers() {
+	if err := g.refuseWrite("add_to_answer"); err != nil {
+		return nil, AnswerAdded{}, err
+	}
+	if !g.exchange.Answers() {
 		return nil, AnswerAdded{}, fmt.Errorf("add_to_answer: this run is not answering a question")
 	}
 	writer, ok := s.answers[g.exchange.Holder]
@@ -460,13 +463,16 @@ func (s *Server) cardOf(contentType string) (domain.AnswerCard, bool) {
 }
 
 // describeAnswer lists the content types the caller's answer can be written in:
-// those its holder takes, and what the holder says beyond them.
+// those its holder takes, and what the holder says beyond them. A run that may
+// not write is refused.
 func (s *Server) describeAnswer(ctx context.Context, _ *mcpsdk.CallToolRequest, _ struct{}) (*mcpsdk.CallToolResult, AnswerCatalogue, error) {
+	g, _ := ctx.Value(grantContextKey{}).(*runGrant)
+	if err := g.refuseWrite("describe_answer"); err != nil {
+		return nil, AnswerCatalogue{}, err
+	}
 	holding := domain.AnswerHolding{RunsJobs: true}
-	if g, _ := ctx.Value(grantContextKey{}).(*runGrant); g != nil {
-		if writer, ok := s.answers[g.exchange.Holder]; ok {
-			holding = writer.AnswerHolding()
-		}
+	if writer, ok := s.answers[g.exchange.Holder]; ok {
+		holding = writer.AnswerHolding()
 	}
 	return nil, AnswerCatalogue{ContentTypes: holding.Offers(s.vocabulary.AnswerCards()), Note: holding.Note()}, nil
 }

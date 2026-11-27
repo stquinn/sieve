@@ -9,21 +9,82 @@ import (
 )
 
 // profileWithMCP returns the default containment profile with the builtin sieve
-// grant's runtime URL + token populated, as the AI service does at render time.
+// grant's runtime URL, token and the run's verbs populated, as the AI service
+// does at render time.
 func profileWithMCP() domain.ContainmentProfile {
 	p := domain.DefaultContainmentProfile()
 	for i := range p.McpServers {
 		if p.McpServers[i].Builtin {
 			p.McpServers[i].URL = "http://127.0.0.1:34115/mcp"
 			p.McpServers[i].Token = "secret-token-abc"
+			p.McpServers[i].Verbs = []string{"search", "get_note"}
 		}
 	}
 	return p
 }
 
+// A run carries the Sieve tools only when its backend injects MCP and the
+// builtin Sieve grant is configured for it: never on agy, never without the
+// builtin's runtime URL, and not for a user-added server alone.
+func TestRun_CarriesSieveTools(t *testing.T) {
+	userServerOnly := domain.DefaultContainmentProfile()
+	userServerOnly.McpServers = append(userServerOnly.McpServers, domain.McpGrant{Name: "forgejo", Command: "forgejo-mcp"})
+	for _, tc := range []struct {
+		dialect string
+		profile domain.ContainmentProfile
+		want    bool
+	}{
+		{"claude", profileWithMCP(), true},
+		{"copilot", profileWithMCP(), true},
+		{"agy", profileWithMCP(), false},
+		{"an unknown CLI", profileWithMCP(), false},
+		{"claude", domain.DefaultContainmentProfile(), false},
+		{"copilot", domain.DefaultContainmentProfile(), false},
+		{"claude", userServerOnly, false},
+	} {
+		if got := runFor(tc.dialect, tc.profile).carriesSieveTools(); got != tc.want {
+			t.Errorf("%s with servers %+v: carries the Sieve tools = %v, want %v", tc.dialect, tc.profile.McpServers, got, tc.want)
+		}
+	}
+}
+
+// The builtin Sieve server is allowed exactly the verbs its grant carries for
+// the run, one entry each and never its wildcard; a user-added server keeps its
+// wildcard; a builtin grant that carries no verbs is allowed none.
+func TestBuildArgs_AllowsTheBuiltinsVerbsByName(t *testing.T) {
+	noVerbs := profileWithMCP()
+	noVerbs.McpServers[0].Verbs = nil
+	withUser := profileWithMCP()
+	withUser.McpServers = append(withUser.McpServers, domain.McpGrant{Name: "forgejo", Command: "forgejo-mcp"})
+	for _, tc := range []struct {
+		name    string
+		dialect string
+		flag    string
+		profile domain.ContainmentProfile
+		want    []string
+	}{
+		{"claude", "claude", "--allowedTools", profileWithMCP(), []string{"mcp__sieve__search", "mcp__sieve__get_note"}},
+		{"copilot", "copilot", "--allow-tool", profileWithMCP(), []string{"mcp__sieve__search", "mcp__sieve__get_note"}},
+		{"no verbs", "claude", "--allowedTools", noVerbs, nil},
+		{"a user server beside", "claude", "--allowedTools", withUser, []string{"mcp__sieve__search", "mcp__sieve__get_note", "mcp__forgejo__*"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var got []string
+			for _, rule := range strings.Split(flagValue(runFor(tc.dialect, tc.profile).args(), tc.flag), ",") {
+				if strings.HasPrefix(rule, "mcp__") {
+					got = append(got, rule)
+				}
+			}
+			if strings.Join(got, ",") != strings.Join(tc.want, ",") {
+				t.Errorf("%s mcp rules = %v, want %v", tc.flag, got, tc.want)
+			}
+		})
+	}
+}
+
 // The logged command line must never expose the per-run MCP bearer token.
 func TestRedactedCommand_RedactsBearerToken(t *testing.T) {
-	args := buildBaseArgs("claude", "", "p", profileWithMCP(), "", libDir)
+	args := runFor("claude", profileWithMCP()).args()
 	cmd := redactedCommand("claude", args)
 
 	if strings.Contains(cmd, "secret-token-abc") {
@@ -41,7 +102,7 @@ func TestRedactedCommand_RedactsBearerToken(t *testing.T) {
 // The multi-line command block must still never expose the per-run MCP bearer
 // token, and must split the command into one flag-group per continuation line.
 func TestFormatCommandBlock_RedactsAndSplitsPerFlag(t *testing.T) {
-	args := buildBaseArgs("claude", "", "p", profileWithMCP(), "", libDir)
+	args := runFor("claude", profileWithMCP()).args()
 	block := formatCommandBlock("claude", args)
 
 	if strings.Contains(block, "secret-token-abc") {
@@ -78,7 +139,7 @@ func TestFormatCommandBlock_RedactsAndSplitsPerFlag(t *testing.T) {
 // the command block must wrap it ONE RULE PER LINE (not a single 300-char wall),
 // while keeping the MCP config JSON — whose commas are structural — on one line.
 func TestFormatCommandBlock_WrapsAllowListPerRule(t *testing.T) {
-	args := buildBaseArgs("claude", "", "p", profileWithMCP(), "", libDir)
+	args := runFor("claude", profileWithMCP()).args()
 	block := formatCommandBlock("claude", args)
 
 	// Each baseline scoped rule sits on its own line (a newline immediately
@@ -122,7 +183,7 @@ func TestBuildArgs_SanitizesServerNameForNamespace(t *testing.T) {
 	p.McpServers = append(p.McpServers, domain.McpGrant{
 		Name: "MCP Server", Transport: "http", URL: "http://localhost:3001/mcp",
 	})
-	args := buildBaseArgs("claude", "", "p", p, "", libDir)
+	args := runFor("claude", p).args()
 
 	cfg := flagValue(args, "--mcp-config")
 	if strings.Contains(cfg, `"MCP Server"`) {
@@ -141,7 +202,7 @@ func TestBuildArgs_SanitizesServerNameForNamespace(t *testing.T) {
 }
 
 func TestBuildArgs_Claude_InjectsMCPWhenLive(t *testing.T) {
-	args := buildBaseArgs("claude", "", "p", profileWithMCP(), "", libDir)
+	args := runFor("claude", profileWithMCP()).args()
 
 	cfg := flagValue(args, "--mcp-config")
 	if cfg == "" {
@@ -170,9 +231,6 @@ func TestBuildArgs_Claude_InjectsMCPWhenLive(t *testing.T) {
 	}
 
 	tools := flagValue(args, "--allowedTools")
-	if !strings.Contains(tools, "mcp__sieve__*") {
-		t.Errorf("--allowedTools missing mcp__sieve__*: %q", tools)
-	}
 	// Baseline capabilities remain present alongside the MCP allow entry — file
 	// grants scoped (never bare), WebFetch bare.
 	for _, want := range []string{"Read(//vault/library/**)", "Grep(//vault/library/**)", "Glob(//vault/library/**)", "WebFetch"} {
@@ -197,7 +255,7 @@ func TestBuildArgs_Claude_InjectsMCPWhenLive(t *testing.T) {
 }
 
 func TestBuildArgs_Copilot_InjectsMCPWhenLive(t *testing.T) {
-	args := buildBaseArgs("copilot", "", "p", profileWithMCP(), "", libDir)
+	args := runFor("copilot", profileWithMCP()).args()
 
 	cfg := flagValue(args, "--additional-mcp-config")
 	if cfg == "" {
@@ -206,24 +264,21 @@ func TestBuildArgs_Copilot_InjectsMCPWhenLive(t *testing.T) {
 	if !strings.Contains(cfg, "http://127.0.0.1:34115/mcp") || !strings.Contains(cfg, "Bearer secret-token-abc") {
 		t.Errorf("--additional-mcp-config missing url/bearer: %s", cfg)
 	}
-	if tools := flagValue(args, "--allow-tool"); !strings.Contains(tools, "mcp__sieve__*") {
-		t.Errorf("--allow-tool missing mcp__sieve__*: %q", tools)
-	}
 }
 
 // When the builtin grant has no runtime URL (no server running), no MCP flags are
 // rendered — the pre-MCP behaviour, so existing arg tests still hold.
 func TestBuildArgs_NoMCPFlagsWhenURLEmpty(t *testing.T) {
 	for _, cli := range []string{"claude", "copilot"} {
-		args := buildBaseArgs(cli, "", "p", domain.DefaultContainmentProfile(), "", libDir)
+		args := runFor(cli, domain.DefaultContainmentProfile()).args()
 		for _, f := range []string{"--mcp-config", "--additional-mcp-config"} {
 			if hasFlag(args, f) {
 				t.Errorf("%s: rendered %s with no live server; args=%v", cli, f, args)
 			}
 		}
 		allow := flagValue(args, "--allowedTools") + flagValue(args, "--allow-tool")
-		if strings.Contains(allow, "mcp__sieve__*") {
-			t.Errorf("%s: allow entry has mcp__sieve__* with no live server: %q", cli, allow)
+		if strings.Contains(allow, "mcp__sieve__") {
+			t.Errorf("%s: allow entry has an mcp__sieve__ rule with no live server: %q", cli, allow)
 		}
 	}
 }
@@ -241,7 +296,7 @@ func TestBuildArgs_Claude_InjectsUserStdioServer(t *testing.T) {
 		Args:    []string{"serve"},
 	})
 
-	args := buildBaseArgs("claude", "", "p", p, "", libDir)
+	args := runFor("claude", p).args()
 
 	cfg := flagValue(args, "--mcp-config")
 	if cfg == "" {
@@ -358,13 +413,13 @@ func TestConfigJSON_PerTransportShapes(t *testing.T) {
 // agy must remain directory-only: no MCP inject flag even when the profile has a
 // live builtin server (agy has no per-call --mcp-config flag).
 func TestBuildArgs_Agy_NeverInjectsMCP(t *testing.T) {
-	args := buildBaseArgs("agy", "", "the prompt", profileWithMCP(), "", libDir)
+	args := runFor("agy", profileWithMCP()).args()
 	for _, f := range []string{"--mcp-config", "--additional-mcp-config", "--allowedTools", "--allow-tool"} {
 		if hasFlag(args, f) {
 			t.Errorf("agy must not render %s; args=%v", f, args)
 		}
 	}
-	if strings.Contains(strings.Join(args, ","), "mcp__sieve__*") {
+	if strings.Contains(strings.Join(args, ","), "mcp__sieve__") {
 		t.Errorf("agy must not carry an mcp allow entry; args=%v", args)
 	}
 }

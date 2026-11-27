@@ -79,8 +79,9 @@ code, diagram, log, prose, smart-image, smart-card, web-clip, ai-block, referenc
 ### `sieve/ai/`
 
 `AIService`; `cli.go` = the CLI runner (`execCLIRunner.Run`) and the per-backend argument
-renderers, the point at which an API backend would be swapped in; prompts; eval helpers;
-`image_localise`.
+renderers, the point at which an API backend would be swapped in, and `Run`, one call to it;
+`task.go` = `Task` (one kind of AI job, declared by `PromptService` in `prompts.go`), `Prompt`
+(its layers) and each task's typed data; `PromptService` also stores each task's addendum (`{task}.addendum.md` in the Prompts category), the one text the Prompts dialog edits and layer 4 of the task's prompt; eval helpers; `image_localise`.
 
 ### `sieve/editor/`
 

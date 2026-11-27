@@ -876,40 +876,65 @@ func (undeletableStore) Delete(store.Storable) error {
 	return errors.New("store is read-only")
 }
 
-// A revert that did not happen announces nothing. The prompt override is still
-// on disk, so a prompts:changed — on the wire or in the header — would send
-// every client to refetch a library that still holds the thing they asked to
-// remove, and the requester would read 204 as success.
-func TestRevertPrompt_AnnouncesNothingWhenTheDeleteFails(t *testing.T) {
+// newRevertPromptServer serves the context menu's revert-prompt route over a
+// PromptService on st, holding an addendum for the "file" task. announced
+// collects what the handler announces.
+func newRevertPromptServer(t *testing.T, wrap func(store.Store) store.Store) (srv *httptest.Server, prompts *ai.PromptService, announced *[]string) {
+	t.Helper()
 	fs, err := filestore.NewFileStore(t.TempDir(), "testhost")
 	if err != nil {
 		t.Fatalf("NewFileStore: %v", err)
 	}
-	prompts, err := ai.NewPromptService(undeletableStore{fs})
+	prompts, err = ai.NewPromptService(wrap(fs))
 	if err != nil {
 		t.Fatalf("NewPromptService: %v", err)
 	}
-	if err := prompts.SavePrompt("file", "an override to revert"); err != nil {
-		t.Fatalf("SavePrompt: %v", err)
+	if err := prompts.SaveAddendum("file", "an addendum to revert"); err != nil {
+		t.Fatalf("SaveAddendum: %v", err)
 	}
-
-	announced := []string{}
+	announced = &[]string{}
 	h := &ContextMenuHandler{
 		ServiceProvider:    &sieve.ServiceProvider{Store: fs, Prompts: prompts},
-		EmitPromptsChanged: func() { announced = append(announced, "prompts") },
-		EmitNotesChanged:   func() { announced = append(announced, "notes") },
+		EmitPromptsChanged: func() { *announced = append(*announced, "prompts") },
+		EmitNotesChanged:   func() { *announced = append(*announced, "notes") },
 	}
 	r := chi.NewRouter()
 	h.RegisterPaths(r)
-	srv := httptest.NewServer(r)
-	defer srv.Close()
+	srv = httptest.NewServer(r)
+	t.Cleanup(srv.Close)
+	return srv, prompts, announced
+}
+
+// A revert deletes the task's addendum, so its dialog opens empty, and
+// announces that the prompts changed.
+func TestRevertPrompt_DeletesTheAddendum(t *testing.T) {
+	srv, prompts, announced := newRevertPromptServer(t, func(st store.Store) store.Store { return st })
+
+	status, _ := do(t, http.MethodPost, srv.URL+"/api/sidebar/revert-prompt?id=prompt:file", "", "")
+	if status != http.StatusNoContent {
+		t.Errorf("status = %d, want 204", status)
+	}
+	if got, err := prompts.Addendum("file"); err != nil || got != "" {
+		t.Errorf("Addendum after revert = %q, %v; want empty", got, err)
+	}
+	if len(*announced) == 0 {
+		t.Error("a revert that happened announced nothing")
+	}
+}
+
+// A revert that did not happen announces nothing. The prompt addendum is still
+// on disk, so a prompts:changed — on the wire or in the header — would send
+// every client to refetch a library that still holds the thing they asked to
+// remove, and the requester would read 204 as success.
+func TestRevertPrompt_AnnouncesNothingWhenTheDeleteFails(t *testing.T) {
+	srv, _, announced := newRevertPromptServer(t, func(st store.Store) store.Store { return undeletableStore{st} })
 
 	status, _ := do(t, http.MethodPost, srv.URL+"/api/sidebar/revert-prompt?id=prompt:file", "", "")
 	if status != http.StatusInternalServerError {
 		t.Errorf("status = %d, want 500 — the revert did not happen", status)
 	}
-	if len(announced) != 0 {
-		t.Errorf("announced %v, want nothing — the override is still on disk", announced)
+	if len(*announced) != 0 {
+		t.Errorf("announced %v, want nothing — the addendum is still on disk", *announced)
 	}
 }
 

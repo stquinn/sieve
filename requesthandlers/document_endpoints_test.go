@@ -75,8 +75,8 @@ func newDocumentEndpointServer(t *testing.T) (*httptest.Server, *sieve.ServicePr
 // two transports cannot drift.
 func TestDocumentLoad_ServesAPromptsContent(t *testing.T) {
 	srv, sp, _, _ := newDocumentEndpointServer(t)
-	if err := sp.Prompts.SavePrompt("ask", "answer the question"); err != nil {
-		t.Fatalf("SavePrompt: %v", err)
+	if err := sp.Prompts.SaveAddendum("ask", "answer the question"); err != nil {
+		t.Fatalf("SaveAddendum: %v", err)
 	}
 
 	status, body := do(t, "GET", srv.URL+"/api/document/load?uuid=prompt:ask", "", "")
@@ -117,7 +117,7 @@ func TestDocumentLoad_RefusesANote(t *testing.T) {
 	}
 }
 
-// A prompt id nothing is stored under — and that no baked-in default answers —
+// A prompt id nothing is stored under — and that no task declares —
 // is a 404, not an empty document: the tab has nothing to show and should say so.
 func TestDocumentLoad_UnknownPromptIsNotFound(t *testing.T) {
 	srv, _, _, _ := newDocumentEndpointServer(t)
@@ -175,6 +175,17 @@ func TestDocumentSave_WritesAPromptTheLoadHalfReadsBack(t *testing.T) {
 	if !strings.Contains(body, "a new instruction") {
 		t.Errorf("load did not read back the saved prompt: %q", body)
 	}
+
+	// Saving empty text removes the addendum, so the task opens empty: its
+	// brief is not what the dialog edits.
+	if status, body = do(t, "POST", srv.URL+"/api/document/save?uuid=prompt:ask",
+		"application/json", `{"body":"  \n","mode":"markdown"}`); status != 200 {
+		t.Fatalf("empty save status = %d (%s), want 200", status, body)
+	}
+	status, body = do(t, "GET", srv.URL+"/api/document/load?uuid=prompt:ask", "", "")
+	if status != 200 || !strings.Contains(body, `"body":""`) {
+		t.Errorf("load after an empty save = %d %q, want 200 and an empty body", status, body)
+	}
 }
 
 // A PROMPT's save announces the same container-saved fact a note's does. It is
@@ -195,7 +206,7 @@ func TestDocumentSave_AnnouncesAPromptSaveAsAContainerFact(t *testing.T) {
 		if got.uuid != "prompt:ask" {
 			t.Errorf("announced uuid = %q, want prompt:ask — the uuid the editor holds", got.uuid)
 		}
-		// A prompt override is a plain file with no metadata, so there is no
+		// A prompt addendum is a plain file with no metadata, so there is no
 		// version to report and 0 is the honest answer. It is asserted rather than
 		// ignored because 0 is what tells a waiting client this container cannot
 		// order its saves — a fabricated number would silently claim it can.

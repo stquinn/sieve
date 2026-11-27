@@ -1546,7 +1546,7 @@ func (describedImage) DescribeJob(block.JobContext) *block.ProcessorJob {
 // cannedCLI is a CLI runner answering every run with its text.
 type cannedCLI string
 
-func (c cannedCLI) Run(_, _, _, _, _ string, _ int, _ string, _ domain.ContainmentProfile, _ string, _ ai.ResponseNote) (string, error) {
+func (c cannedCLI) Run(_ ai.Run, _ ai.ResponseNote) (string, error) {
 	return string(c), nil
 }
 

@@ -46,6 +46,23 @@ func newSmartTestService(t *testing.T, cap *captureRunner) *AIService {
 	return &AIService{state: state, prompts: prompts, storePath: root, runner: cap}
 }
 
+// assertRan fails t unless the captured run was the task named name, as ps
+// declares it, sent the prompt ps builds for it with data, speaking of the
+// Sieve tools exactly when the run carries them.
+func (c *captureRunner) assertRan(t *testing.T, ps *PromptService, name string, data TaskData) {
+	t.Helper()
+	task, err := ps.Task(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.run.Task != task {
+		t.Errorf("ran task %+v, want %+v", c.run.Task, task)
+	}
+	if want := ps.Prompt(task, data, c.run.carriesSieveTools()); c.run.Prompt != want {
+		t.Errorf("prompt =\n%s\nwant\n%s", c.run.Prompt, want)
+	}
+}
+
 func TestRunBtw_PromptAssemblyAndOp(t *testing.T) {
 	cap := &captureRunner{ret: "answer"}
 	svc := newSmartTestService(t, cap)
@@ -53,17 +70,7 @@ func TestRunBtw_PromptAssemblyAndOp(t *testing.T) {
 	if err != nil || out.Text != "answer" {
 		t.Fatalf("unexpected: %v %q", err, out.Text)
 	}
-	if cap.op != "btw" {
-		t.Fatalf("op = %q, want btw", cap.op)
-	}
-	for _, want := range []string{"what is KISS", "the selected words", "My Doc", "a summary", "uuid-1"} {
-		if !strings.Contains(cap.prompt, want) {
-			t.Fatalf("prompt missing %q in %q", want, cap.prompt)
-		}
-	}
-	if strings.Contains(cap.prompt, "{question}") || strings.Contains(cap.prompt, "{selection}") {
-		t.Fatal("unreplaced placeholders in prompt")
-	}
+	cap.assertRan(t, svc.prompts, "btw", BtwData{Question: "what is KISS", Selection: "the selected words", DocTitle: "My Doc", DocSummary: "a summary", DocUUID: "uuid-1"})
 }
 
 func TestRunBtw_TierDumbFails(t *testing.T) {
@@ -87,7 +94,7 @@ func TestRunBtw_NoDocUsesStorePathCwd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cap.cwd != svc.storePath {
-		t.Fatalf("cwd = %q, want storePath %q", cap.cwd, svc.storePath)
+	if cap.run.Cwd != svc.storePath {
+		t.Fatalf("cwd = %q, want storePath %q", cap.run.Cwd, svc.storePath)
 	}
 }

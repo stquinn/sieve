@@ -16,7 +16,7 @@ type stubWebClipRunner struct {
 	err error
 }
 
-func (s stubWebClipRunner) Run(_, _, _, _, _ string, _ int, _ string, _ domain.ContainmentProfile, _ string, _ ai.ResponseNote) (string, error) {
+func (s stubWebClipRunner) Run(_ ai.Run, _ ai.ResponseNote) (string, error) {
 	return s.ret, s.err
 }
 

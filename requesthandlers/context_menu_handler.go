@@ -250,8 +250,8 @@ func (h *ContextMenuHandler) handleRevertPrompt(w http.ResponseWriter, r *http.R
 		// A failed revert announces NOTHING — the same doctrine a failed save
 		// follows: the news is that something HAPPENED, so absence is the honest
 		// signal when it did not. Emitting anyway would have every client refetch
-		// a prompt library that still holds the override.
-		if err := h.ServiceProvider.Prompts.DeletePrompt(name); err != nil {
+		// a prompt library that still holds the addendum.
+		if err := h.ServiceProvider.Prompts.DeleteAddendum(name); err != nil {
 			logger.Warn("revert prompt failed", "id", id, "err", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return

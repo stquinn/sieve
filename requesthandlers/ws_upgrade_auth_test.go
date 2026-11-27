@@ -115,7 +115,7 @@ func TestWS_AnMCPTokenCannotOpenAWire(t *testing.T) {
 
 	mcpServer := mcp.NewServer(sp.Documents, nil, nil, sp.LinkPreview)
 	mcpServer.SetBaseURL(srv.URL)
-	_, mcpToken := mcpServer.EndpointFor(domain.Exchange{})
+	_, mcpToken, _ := mcpServer.EndpointFor(domain.Exchange{}, false)
 	if mcpToken == "" {
 		t.Fatal("the MCP server issued no token: the disjointness claim is untested")
 	}

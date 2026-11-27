@@ -15,22 +15,40 @@ import (
 	"sieve/sieve/domain"
 )
 
-// CLIRunner executes an AI CLI invocation. It is the seam AIService depends on
+// CLIRunner executes one AI CLI invocation. It is the seam AIService depends on
 // so ops-level tests can stub the subprocess (CI has no CLI binaries installed);
 // execCLIRunner is the production implementation that actually spawns the process.
-//
-// op names the AI operation (e.g. "explain", "file", "web-clip-fetch") — it is
-// used only for log correlation so calls are distinguishable at a glance.
-//
-// binary is the executable spawned; dialect selects the per-backend argument
-// renderer (buildBaseArgs). They are usually equal (a bare provider name), but a
-// user-configured CLIPath wrapper makes binary a script path while dialect keeps
-// following the provider dropdown — see Settings.ResolveCLI.
 //
 // note, when non-nil, is asked once the CLI has exited with a response, and what
 // it says is logged on that response's header.
 type CLIRunner interface {
-	Run(op, binary, dialect, prompt, model string, timeoutSecs int, cwd string, profile domain.ContainmentProfile, libraryDir string, note ResponseNote) (string, error)
+	Run(run Run, note ResponseNote) (string, error)
+}
+
+// CLI is the configured CLI a run spawns. Binary is the executable; Dialect
+// selects the per-backend argument renderer (backendFor). They are usually equal
+// (a bare provider name), but a user-configured CLIPath wrapper makes Binary a
+// script path while Dialect keeps following the provider dropdown — see
+// Settings.ResolveCLI. An empty Model is the CLI's default.
+type CLI struct {
+	Binary      string
+	Dialect     string
+	Model       string
+	TimeoutSecs int
+}
+
+// Run is one call to the CLI: the task it runs (its Name correlates the log
+// lines), the prompt sent, the CLI spawned, the containment floor rendered to
+// its arguments, and its working directory. LibraryDir resolves the profile's
+// symbolic "library" directory grant to a concrete path; an empty Cwd is
+// floored to it.
+type Run struct {
+	Task       Task
+	Prompt     Prompt
+	CLI        CLI
+	Profile    domain.ContainmentProfile
+	Cwd        string
+	LibraryDir string
 }
 
 // ResponseNote says what became of a run's final message, when that is not
@@ -59,15 +77,15 @@ func floorCwd(cwd, libraryDir string) string {
 	return libraryDir
 }
 
-// Run executes the configured CLI using the provided prompt content via STDIN.
-// cwd sets the working directory for the subprocess — pass the note/buffer's
-// directory so relative asset paths in markdown resolve correctly. An empty cwd
-// is floored to the library (floorCwd); it is never left to the process cwd.
+// Run executes run's CLI with what its backend sends on STDIN (Run.stdin). The
+// run's Cwd is the subprocess's working directory — the note/buffer's
+// directory, so relative asset paths in markdown resolve correctly. An empty Cwd is floored to the
+// library (floorCwd); it is never left to the process cwd.
 //
-// profile is the containment floor rendered to CLI args (never config files);
-// libraryDir resolves the profile's symbolic "library" directory grant to the
-// concrete --add-dir path. The note directory is the cwd and needs no grant.
-func (r execCLIRunner) Run(op, binary, dialect, prompt, model string, timeoutSecs int, cwd string, profile domain.ContainmentProfile, libraryDir string, note ResponseNote) (string, error) {
+// The profile is the containment floor rendered to CLI args (never config
+// files). The note directory is the cwd and needs no grant.
+func (r execCLIRunner) Run(run Run, note ResponseNote) (string, error) {
+	op, timeoutSecs := run.Task.Name, run.CLI.TimeoutSecs
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutSecs)*time.Second)
 	defer cancel()
 
@@ -75,16 +93,14 @@ func (r execCLIRunner) Run(op, binary, dialect, prompt, model string, timeoutSec
 	// that the library. floorCwd is defence-in-depth — even if a caller forgets
 	// its fallback, the subprocess never inherits the process cwd (which on a
 	// Finder/Dock-launched macOS app is /). #41.
-	cwd = floorCwd(cwd, libraryDir)
+	run.Cwd = floorCwd(run.Cwd, run.LibraryDir)
 
-	// dialect selects the arg renderer; binary is what we actually spawn (they
-	// differ only when a CLIPath wrapper is configured).
-	args := buildBaseArgs(dialect, model, prompt, profile, cwd, libraryDir)
+	args := run.args()
 
-	cmd := exec.CommandContext(ctx, binary, args...)
-	cmd.Stdin = bytes.NewBufferString(prompt)
-	if cwd != "" {
-		cmd.Dir = cwd
+	cmd := exec.CommandContext(ctx, run.CLI.Binary, args...)
+	cmd.Stdin = bytes.NewBufferString(run.stdin())
+	if run.Cwd != "" {
+		cmd.Dir = run.Cwd
 	}
 
 	// Inherit the full login shell PATH so the subprocess can find tools
@@ -96,32 +112,20 @@ func (r execCLIRunner) Run(op, binary, dialect, prompt, model string, timeoutSec
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	// Concise, scannable breakdown of the call: what op, which CLI/model, the
-	// containment policy, the timeout, the exact command line (bearer token
-	// redacted), and the full prompt — all as ONE block so the whole invocation
-	// reads as a single unit when scanning the log.
-	logCwd := cwd
-	if logCwd == "" {
-		logCwd = "(process cwd)"
-	}
-	logModel := model
-	if logModel == "" {
-		logModel = "(default)"
-	}
-	logger.LogBlock(
-		fmt.Sprintf("AI REQUEST ▸ %s", op),
-		requestLogBody(binary, logModel, timeoutSecs, logCwd, profile, args, prompt))
+	logger.LogBlock(fmt.Sprintf("AI REQUEST ▸ %s ▸ command", op), run.commandLog(args))
+	logger.LogBlock(fmt.Sprintf("AI REQUEST ▸ %s ▸ framework", op), run.Prompt.FrameworkLayers())
+	logger.LogBlock(fmt.Sprintf("AI REQUEST ▸ %s ▸ task", op), run.Prompt.TaskLayers())
 
 	started := time.Now()
 	err := cmd.Run()
 	elapsedMs := time.Since(started).Milliseconds()
 
 	if ctx.Err() == context.DeadlineExceeded {
-		logger.Error("ai cli FAILED ▸ "+op, "cli", binary, "timeout_s", timeoutSecs, "elapsed_ms", elapsedMs)
+		logger.Error("ai cli FAILED ▸ "+op, "cli", run.CLI.Binary, "timeout_s", timeoutSecs, "elapsed_ms", elapsedMs)
 		return "", fmt.Errorf("cli timeout after %d seconds", timeoutSecs)
 	}
 	if err != nil {
-		logger.Error("ai cli FAILED ▸ "+op, "cli", binary, "elapsed_ms", elapsedMs, "err", err, "stderr", strings.TrimSpace(stderr.String()))
+		logger.Error("ai cli FAILED ▸ "+op, "cli", run.CLI.Binary, "elapsed_ms", elapsedMs, "err", err, "stderr", strings.TrimSpace(stderr.String()))
 		return "", fmt.Errorf("cli execution error: %v (stderr: %s)", err, stderr.String())
 	}
 
@@ -149,18 +153,27 @@ func redactedCommand(cli string, args []string) string {
 	return bearerTokenRe.ReplaceAllString(joined, "Bearer ***")
 }
 
-// requestLogBody composes the full body of the AI REQUEST log block: the
-// resolved cli/model/timeout/cwd, the containment policy summary, the exact
-// command line broken one flag-group per line (see formatCommandBlock), and —
-// after a blank-line gap — the full prompt text, so the whole invocation reads
-// as a single scannable unit.
-func requestLogBody(cli, model string, timeoutSecs int, cwd string, profile domain.ContainmentProfile, args []string, prompt string) string {
+// commandLog is the first of a run's three AI REQUEST log blocks, how the CLI
+// was executed with args: the resolved cli/model/timeout/cwd, the containment
+// policy summary and the exact command line broken one flag-group per line (see
+// formatCommandBlock). The prompt follows in two blocks of its own, the
+// framework's layers and the task's, each under its heading whether it
+// travelled in an argument or on STDIN.
+func (r Run) commandLog(args []string) string {
+	cwd := r.Cwd
+	if cwd == "" {
+		cwd = "(process cwd)"
+	}
+	model := r.CLI.Model
+	if model == "" {
+		model = "(default)"
+	}
 	// Labels are flush-left (not indented): logBlock trims the block's leading
 	// whitespace, which would otherwise strip only the first line's indent and
 	// leave the fields misaligned.
 	return fmt.Sprintf(
-		"cli       %s   (model: %s)\ntimeout   %ds\ncwd       %s\npolicy    %s\ncommand   %s\n\n%s",
-		cli, model, timeoutSecs, cwd, profile.Summary(), formatCommandBlock(cli, args), prompt)
+		"cli       %s   (model: %s)\ntimeout   %ds\ncwd       %s\npolicy    %s\ncommand   %s",
+		r.CLI.Binary, model, r.CLI.TimeoutSecs, cwd, r.Profile.Summary(), formatCommandBlock(r.CLI.Binary, args))
 }
 
 // formatCommandBlock renders the executed command line as a multi-line,
@@ -169,8 +182,10 @@ func requestLogBody(cli, model string, timeoutSecs int, cwd string, profile doma
 // every subsequent --flag and its value(s) get their own indented continuation
 // line. Allow-list flags (--allowedTools etc.), whose single value is now a long
 // comma-joined list of scoped rules, are wrapped ONE RULE PER LINE so the grants
-// stay scannable instead of collapsing into a 300-char wall. The MCP bearer token
-// is redacted (bearerTokenRe) so the per-run secret never lands in the log.
+// stay scannable instead of collapsing into a 300-char wall. The value of
+// --append-system-prompt is shown by systemPromptStandIn, as the log prints the
+// prompt's layers after the command. The MCP bearer token is redacted
+// (bearerTokenRe) so the per-run secret never lands in the log.
 func formatCommandBlock(cli string, args []string) string {
 	i := 0
 	first := cli
@@ -192,8 +207,11 @@ func formatCommandBlock(cli string, args []string) string {
 			group += " " + args[i]
 			i++
 		}
-		if len(values) == 1 && isAllowListFlag(flag) {
+		switch {
+		case len(values) == 1 && isAllowListFlag(flag):
 			group = wrapAllowList(flag, values[0], continuationIndent)
+		case len(values) == 1 && flag == systemPromptFlag:
+			group = flag + " " + systemPromptStandIn
 		}
 		lines = append(lines, group)
 	}
@@ -201,6 +219,14 @@ func formatCommandBlock(cli string, args []string) string {
 	joined := strings.Join(lines, continuationIndent)
 	return bearerTokenRe.ReplaceAllString(joined, "Bearer ***")
 }
+
+// systemPromptFlag is claude's flag for the system layers of a prompt
+// (Prompt.System); systemPromptStandIn is what the logged command line shows
+// for its value.
+const (
+	systemPromptFlag    = "--append-system-prompt"
+	systemPromptStandIn = "<the system layers, logged in the blocks below>"
+)
 
 // isAllowListFlag reports whether a flag's value is a comma-joined allow/deny
 // list (of scoped tool rules) worth wrapping one-per-line in the log. The MCP
@@ -233,11 +259,15 @@ func wrapAllowList(flag, csv, continuationIndent string) string {
 	return b.String()
 }
 
-// cliBackend is one CLI's argument renderer: everything that differs between
-// dialects lives behind this one method, and nothing outside the renderer needs
-// to know which dialect is configured.
+// cliBackend is one CLI's adapter: everything that differs between dialects
+// lives behind it, and nothing outside it needs to know which dialect is
+// configured. buildArgs renders a run's arguments, stdin what the run sends on
+// STDIN, and carriesSieveTools whether a run under profile is given the Sieve
+// tools: the backend injects MCP and the builtin Sieve grant is configured.
 type cliBackend interface {
-	buildArgs(profile domain.ContainmentProfile, cwd, libraryDir, model, prompt string) []string
+	buildArgs(profile domain.ContainmentProfile, cwd, libraryDir, model string, prompt Prompt) []string
+	stdin(prompt Prompt) string
+	carriesSieveTools(profile domain.ContainmentProfile) bool
 }
 
 // backendFor selects the adapter for a dialect. A dialect with no adapter is
@@ -254,18 +284,34 @@ func backendFor(dialect string) cliBackend {
 	return nil
 }
 
-// buildBaseArgs selects the per-backend adapter and renders the containment
-// profile to that CLI's arguments. Dropping the former --dangerously-skip-
-// permissions / --yolo re-arms each CLI's native path gate; the typed tool
-// grants are then rendered per-backend (claude scopes file grants in the allow
-// rule, copilot on the --add-dir path axis), so reads confine to cwd + the
-// --add-dir grants and no bare filesystem-wide allow entry leaks. #41.
-func buildBaseArgs(dialect string, model string, prompt string, profile domain.ContainmentProfile, cwd, libraryDir string) []string {
-	b := backendFor(dialect)
+// args renders the run to its CLI's arguments through the dialect's backend:
+// its containment profile, model and whatever of its prompt the backend sends
+// as an argument. No backend passes a permission-bypass flag, so each CLI's
+// native path gate stays armed and reads confine to cwd and the --add-dir
+// grants. A dialect with no backend renders none.
+func (r Run) args() []string {
+	b := backendFor(r.CLI.Dialect)
 	if b == nil {
 		return nil
 	}
-	return b.buildArgs(profile, cwd, libraryDir, model, prompt)
+	return b.buildArgs(r.Profile, r.Cwd, r.LibraryDir, r.CLI.Model, r.Prompt)
+}
+
+// stdin is what the run sends its CLI on STDIN, as its dialect's backend
+// chooses; a dialect with no backend is sent the whole prompt.
+func (r Run) stdin() string {
+	b := backendFor(r.CLI.Dialect)
+	if b == nil {
+		return r.Prompt.String()
+	}
+	return b.stdin(r.Prompt)
+}
+
+// carriesSieveTools reports whether the run is given the Sieve tools, as its
+// dialect's backend says; a dialect with no backend is not.
+func (r Run) carriesSieveTools() bool {
+	b := backendFor(r.CLI.Dialect)
+	return b != nil && b.carriesSieveTools(r.Profile)
 }
 
 // fileScopeDirs is the set of directories a file-type tool grant is scoped to:
@@ -362,12 +408,14 @@ func splitConstraint(s string) []string {
 	return out
 }
 
-// claudeBackend renders the profile for the claude CLI, which reads the prompt
-// from STDIN. --add-dir + --allowedTools express the containment floor; --strict-
-// mcp-config is deliberately never passed so the user's inherited approvals load.
+// claudeBackend renders the profile for the claude CLI. The prompt's system
+// layers (Prompt.System) are the value of --append-system-prompt and its input
+// layers (Prompt.Input) are sent on STDIN. --add-dir + --allowedTools express
+// the containment floor; --strict-mcp-config is deliberately never passed so
+// the user's inherited approvals load.
 type claudeBackend struct{}
 
-func (claudeBackend) buildArgs(profile domain.ContainmentProfile, cwd, libraryDir, model, _ string) []string {
+func (claudeBackend) buildArgs(profile domain.ContainmentProfile, cwd, libraryDir, model string, prompt Prompt) []string {
 	args := []string{"--print", "--no-session-persistence"}
 	for _, dir := range profile.AddDirs(libraryDir) {
 		args = append(args, "--add-dir", dir)
@@ -383,11 +431,20 @@ func (claudeBackend) buildArgs(profile domain.ContainmentProfile, cwd, libraryDi
 	if model != "" {
 		args = append(args, "--model", model)
 	}
+	if system := prompt.System(); system != "" {
+		args = append(args, systemPromptFlag, system)
+	}
 	return args
 }
 
-// copilotBackend renders the profile for the copilot CLI. It reads the prompt
-// from STDIN (--prompt ""). Copilot has THREE orthogonal containment axes: file
+func (claudeBackend) stdin(prompt Prompt) string { return prompt.Input() }
+
+func (claudeBackend) carriesSieveTools(profile domain.ContainmentProfile) bool {
+	return newMCPInjection(profile).carriesSieve()
+}
+
+// copilotBackend renders the profile for the copilot CLI. It reads the whole
+// prompt from STDIN (--prompt ""). Copilot has THREE orthogonal containment axes: file
 // access is gated by --add-dir (path verification is on by default), web access
 // by --allow-url / --allow-all-urls (its OWN axis), and tool permission by
 // --allow-tool. So file-type grants render as PLAIN tool names (the path axis
@@ -395,7 +452,7 @@ func (claudeBackend) buildArgs(profile domain.ContainmentProfile, cwd, libraryDi
 // and --deny-tool shell,write hard-blocks writes (opt-in).
 type copilotBackend struct{}
 
-func (copilotBackend) buildArgs(profile domain.ContainmentProfile, cwd, libraryDir, model, _ string) []string {
+func (copilotBackend) buildArgs(profile domain.ContainmentProfile, cwd, libraryDir, model string, _ Prompt) []string {
 	args := []string{"--prompt", "", "--silent"}
 	for _, dir := range profile.AddDirs(libraryDir) {
 		args = append(args, "--add-dir", dir)
@@ -417,6 +474,12 @@ func (copilotBackend) buildArgs(profile domain.ContainmentProfile, cwd, libraryD
 		args = append(args, "--model", model)
 	}
 	return args
+}
+
+func (copilotBackend) stdin(prompt Prompt) string { return prompt.String() }
+
+func (copilotBackend) carriesSieveTools(profile domain.ContainmentProfile) bool {
+	return newMCPInjection(profile).carriesSieve()
 }
 
 // copilotToolAxes splits the profile's tool grants across copilot's two relevant
@@ -467,13 +530,12 @@ func copilotToolAxes(profile domain.ContainmentProfile) (toolNames, urlArgs []st
 // per-tool allow/deny flag and no per-call --mcp-config inject flag, so under the
 // uniform fail-closed rule its column is empty for every tool grant: it emits no
 // tool names and relies on --add-dir + --mode plan. The renderer returns BEFORE
-// any allowlist/MCP logic — which also means a model on agy cannot call get_note,
-// so it is told which documents were attached and answers without their
-// contents. agy does NOT read STDIN — --print takes the prompt as its trailing
+// any allowlist/MCP logic, so a run on agy never carries the Sieve tools. agy
+// does NOT read STDIN — --print takes the whole prompt as its trailing
 // argument.
 type agyBackend struct{}
 
-func (agyBackend) buildArgs(profile domain.ContainmentProfile, cwd, libraryDir, model, prompt string) []string {
+func (agyBackend) buildArgs(profile domain.ContainmentProfile, cwd, libraryDir, model string, prompt Prompt) []string {
 	var args []string
 	for _, dir := range profile.AddDirs(libraryDir) {
 		args = append(args, "--add-dir", dir)
@@ -482,8 +544,12 @@ func (agyBackend) buildArgs(profile domain.ContainmentProfile, cwd, libraryDir, 
 	if model != "" {
 		args = append(args, "--model", model)
 	}
-	return append(args, "--print", prompt)
+	return append(args, "--print", prompt.String())
 }
+
+func (agyBackend) stdin(Prompt) string { return "" }
+
+func (agyBackend) carriesSieveTools(domain.ContainmentProfile) bool { return false }
 
 // mcpInjection renders a containment profile's *configured* MCP servers — stdio
 // servers with a Command, remote (http/sse) servers with a URL, including the
@@ -510,6 +576,17 @@ func newMCPInjection(profile domain.ContainmentProfile) mcpInjection {
 }
 
 func (mi mcpInjection) present() bool { return len(mi.servers) > 0 }
+
+// carriesSieve reports whether the builtin Sieve server is among the injected
+// servers.
+func (mi mcpInjection) carriesSieve() bool {
+	for _, m := range mi.servers {
+		if m.Builtin {
+			return true
+		}
+	}
+	return false
+}
 
 // mcpServerEntry is one entry in the inline --mcp-config payload. Type is
 // omitted for stdio (the CLIs infer stdio from the presence of "command"); it is
@@ -560,14 +637,23 @@ func (mi mcpInjection) configJSON() string {
 	return string(b)
 }
 
-// allowEntries returns the per-server wildcard allow tokens
-// (mcp__<NamespaceID>__*), using the SAME sanitized id as configJSON's config
-// key so the allow rule matches the CLI's tool namespace. The fully-wildcard
-// mcp__* form is deliberately not used — CLIs reject it.
+// allowEntries returns the per-server allow tokens, using the SAME sanitized id
+// as configJSON's config key so the allow rule matches the CLI's tool
+// namespace: one mcp__<NamespaceID>__<verb> per verb the builtin Sieve grant
+// carries for this run (none when it carries none), and the wildcard
+// mcp__<NamespaceID>__* for every other server. The fully-wildcard mcp__* form
+// is deliberately not used — CLIs reject it.
 func (mi mcpInjection) allowEntries() []string {
-	entries := make([]string, 0, len(mi.servers))
+	var entries []string
 	for _, m := range mi.servers {
-		entries = append(entries, "mcp__"+m.NamespaceID()+"__*")
+		prefix := "mcp__" + m.NamespaceID() + "__"
+		if !m.Builtin {
+			entries = append(entries, prefix+"*")
+			continue
+		}
+		for _, verb := range m.Verbs {
+			entries = append(entries, prefix+verb)
+		}
 	}
 	return entries
 }

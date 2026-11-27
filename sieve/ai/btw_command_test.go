@@ -91,8 +91,8 @@ func TestBtwBuild_MetaOnlyContext(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(cap.prompt, "Architecture Notes") || !strings.Contains(cap.prompt, "System design principles") {
-		t.Fatalf("prompt missing doc meta: %q", cap.prompt)
+	if !strings.Contains(cap.run.Prompt.String(), "Architecture Notes") || !strings.Contains(cap.run.Prompt.String(), "System design principles") {
+		t.Fatalf("prompt missing doc meta: %q", cap.run.Prompt.String())
 	}
 }
 
@@ -232,12 +232,12 @@ func TestBtwBuild_PromptFlattensTheWholeQuestion(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if !strings.Contains(cap.prompt, "why does this fail?\n\n```go\nx := 1\n```") {
-		t.Fatalf("prompt did not carry the flattened question:\n%s", cap.prompt)
+	if !strings.Contains(cap.run.Prompt.String(), "why does this fail?\n\n```go\nx := 1\n```") {
+		t.Fatalf("prompt did not carry the flattened question:\n%s", cap.run.Prompt.String())
 	}
 	// A reference reaches a prompt as an attachment, never as text of its own.
-	if strings.Contains(cap.prompt, "sieve://9f2b") {
-		t.Errorf("a reference element leaked into the prompt as text:\n%s", cap.prompt)
+	if strings.Contains(cap.run.Prompt.String(), "sieve://9f2b") {
+		t.Errorf("a reference element leaked into the prompt as text:\n%s", cap.run.Prompt.String())
 	}
 }
 
@@ -265,8 +265,8 @@ func TestBtwBuild_ComposedBodyAloneIsAQuestion(t *testing.T) {
 	if _, err := job.Work(); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(cap.prompt, "what does this do?") {
-		t.Errorf("the composed question never reached the prompt:\n%s", cap.prompt)
+	if !strings.Contains(cap.run.Prompt.String(), "what does this do?") {
+		t.Errorf("the composed question never reached the prompt:\n%s", cap.run.Prompt.String())
 	}
 }
 

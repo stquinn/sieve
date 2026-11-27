@@ -75,8 +75,9 @@ type DirGrant struct {
 // the internal Sieve server, whose runtime URL + bearer token are generated
 // per-call — URL is persisted for user-added remote servers, but the builtin
 // grant is always Baseline:true, so WithoutBaseline (used by Settings.Marshal)
-// strips it before it ever reaches settings.json. Token is always runtime-only
-// (the builtin's per-run bearer) and is never persisted regardless of Baseline.
+// strips it before it ever reaches settings.json. Token and Verbs are always
+// runtime-only (the builtin's per-run bearer, and the verbs of it that run may
+// call) and are never persisted regardless of Baseline.
 type McpGrant struct {
 	Name      string            `json:"name"`
 	Transport string            `json:"transport,omitempty"` // "stdio" | "http" | "sse"
@@ -87,6 +88,7 @@ type McpGrant struct {
 	URL       string            `json:"url,omitempty"`     // http/sse (builtin's is ephemeral but Baseline, so never persisted)
 	Headers   map[string]string `json:"headers,omitempty"` // http/sse static headers
 	Token     string            `json:"-"`                 // runtime-only per-run bearer (builtin); NEVER persisted
+	Verbs     []string          `json:"-"`                 // runtime-only: the builtin's verbs this run may call; NEVER persisted
 	Baseline  bool              `json:"baseline,omitempty"`
 }
 

@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
@@ -63,7 +64,7 @@ func TestAuth_AcceptsIssuedToken(t *testing.T) {
 	s := newTestServer(t)
 	s.SetBaseURL("http://127.0.0.1:34115")
 
-	url, token := s.EndpointFor(domain.Exchange{})
+	url, token, _ := s.EndpointFor(domain.Exchange{}, false)
 	if url != "http://127.0.0.1:34115/mcp" {
 		t.Fatalf("Endpoint url = %q", url)
 	}
@@ -80,9 +81,9 @@ func TestAuth_AcceptsIssuedToken(t *testing.T) {
 
 func TestEndpoint_EmptyWhenNoBaseURL(t *testing.T) {
 	s := newTestServer(t)
-	url, token := s.EndpointFor(domain.Exchange{})
-	if url != "" || token != "" {
-		t.Errorf("no base URL: Endpoint = (%q, %q), want empty", url, token)
+	url, token, verbs := s.EndpointFor(domain.Exchange{}, true)
+	if url != "" || token != "" || verbs != nil {
+		t.Errorf("no base URL: Endpoint = (%q, %q, %v), want empty", url, token, verbs)
 	}
 }
 
@@ -118,7 +119,7 @@ func TestAuth_EndpointForBindsDocumentOverHTTP(t *testing.T) {
 	defer mcpSrv.Close()
 	s.SetBaseURL(mcpSrv.URL)
 
-	mcpURL, token := s.EndpointFor(domain.Exchange{Container: doc.UUID()})
+	mcpURL, token, _ := s.EndpointFor(domain.Exchange{Container: doc.UUID()}, false)
 	client := mcpsdk.NewClient(&mcpsdk.Implementation{Name: "test-cli", Version: "v1"}, nil)
 	session, err := client.Connect(context.Background(), &mcpsdk.StreamableClientTransport{
 		Endpoint: mcpURL,
@@ -148,16 +149,17 @@ func TestAuth_EndpointForBindsDocumentOverHTTP(t *testing.T) {
 }
 
 // Over the real transport, add_to_answer writes into the exchange the bearer
-// token was issued for: the call names no target. Once the run has ended, its
-// token is refused as unauthorised.
+// token was issued for: the call names no target. The verbs EndpointFor names
+// are the tools the server lists, the write verbs left out for a run that may
+// not write. Once the run has ended, its token is refused as unauthorised.
 func TestAuth_EndpointForBindsTheExchangeOverHTTP(t *testing.T) {
 	ex := domain.Exchange{Container: "0198c1a0-0001-7000-8000-000000000001", Block: "0198c1a0-0001-7000-8000-000000000020"}
-	s, w, _ := newAnswerServer(t, domain.Exchange{})
+	s, w, _ := newAnswerServer(t, domain.Exchange{}, true)
 	mcpSrv := httptest.NewServer(s)
 	defer mcpSrv.Close()
 	s.SetBaseURL(mcpSrv.URL)
 
-	mcpURL, token := s.EndpointFor(ex)
+	mcpURL, token, verbs := s.EndpointFor(ex, true)
 	client := mcpsdk.NewClient(&mcpsdk.Implementation{Name: "test-cli", Version: "v1"}, nil)
 	session, err := client.Connect(context.Background(), &mcpsdk.StreamableClientTransport{
 		Endpoint:   mcpURL,
@@ -167,6 +169,25 @@ func TestAuth_EndpointForBindsTheExchangeOverHTTP(t *testing.T) {
 		t.Fatalf("Connect: %v", err)
 	}
 	defer session.Close()
+
+	listed, err := session.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	var names []string
+	for _, tool := range listed.Tools {
+		names = append(names, tool.Name)
+	}
+	slices.Sort(names)
+	if got := slices.Sorted(slices.Values(verbs)); !slices.Equal(got, names) {
+		t.Errorf("EndpointFor names the verbs %v, want the listed tools %v", verbs, names)
+	}
+	_, dataToken, dataVerbs := s.EndpointFor(ex, false)
+	s.EndRun(dataToken)
+	want := slices.DeleteFunc(names, func(n string) bool { return n == "add_to_answer" || n == "describe_answer" })
+	if got := slices.Sorted(slices.Values(dataVerbs)); !slices.Equal(got, want) {
+		t.Errorf("a run that may not write is named %v, want %v", dataVerbs, want)
+	}
 
 	res, err := session.CallTool(context.Background(), &mcpsdk.CallToolParams{
 		Name:      "add_to_answer",

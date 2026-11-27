@@ -22,13 +22,16 @@ import (
 // internal Sieve MCP server, and ends a run. EndpointFor binds the token to an
 // exchange: verbs that write into a document (such as fetch_page) touch only
 // its container, and an answer written through the MCP lands only in its block;
-// an empty Exchange grants neither. An empty URL means no server is reachable,
-// so the profile renders without MCP flags. EndRun ends the run holding token
-// once its CLI has exited, however it ended: the token is refused from then on,
-// and EndRun returns how many elements of the exchange's answer the run wrote.
-// The internal MCP server satisfies it.
+// an empty Exchange grants neither. writes says whether the run may call the
+// write verbs at all, a run that may not being refused every one and named only
+// the read verbs; verbs are the names of the verbs the run may call. An
+// empty URL means no server is reachable, so the profile renders without MCP
+// flags. EndRun ends the run holding token once its CLI has exited, however it
+// ended: the token is refused from then on, and EndRun returns how many
+// elements of the exchange's answer the run wrote. The internal MCP server
+// satisfies it.
 type MCPEndpoint interface {
-	EndpointFor(ex domain.Exchange) (url, token string)
+	EndpointFor(ex domain.Exchange, writes bool) (url, token string, verbs []string)
 	EndRun(token string) (written int)
 }
 
@@ -75,15 +78,16 @@ func (s *AIService) SetRunner(r CLIRunner) { s.runner = r }
 
 // profileFor returns the containment floor for a CLI call scoped to ex, and the
 // bearer token it carries ("" when no MCP is reachable): the builtin Sieve MCP
-// grant's runtime URL and a token bound to ex are filled in when an endpoint is
-// wired and reachable. When none is, the builtin grant keeps its empty URL and
-// the backend renders no MCP flags.
-func (s *AIService) profileFor(ex domain.Exchange) (domain.ContainmentProfile, string) {
+// grant's runtime URL, a token bound to ex and the verbs the run may call are
+// filled in when an endpoint is wired and reachable; writes says whether those
+// include the write verbs. When none is, the builtin grant keeps its empty URL
+// and the backend renders no MCP flags.
+func (s *AIService) profileFor(ex domain.Exchange, writes bool) (domain.ContainmentProfile, string) {
 	p := s.savedProfile()
 	if s.mcp == nil {
 		return p, ""
 	}
-	url, token := s.mcp.EndpointFor(ex)
+	url, token, verbs := s.mcp.EndpointFor(ex, writes)
 	if url == "" {
 		return p, ""
 	}
@@ -96,23 +100,38 @@ func (s *AIService) profileFor(ex domain.Exchange) (domain.ContainmentProfile, s
 		if servers[i].Builtin {
 			servers[i].URL = url
 			servers[i].Token = token
+			servers[i].Verbs = verbs
 		}
 	}
 	p.McpServers = servers
 	return p, token
 }
 
-// run runs the CLI once for the prompt named op: prompt, in cwd, under the
-// containment floor with its MCP token bound to ex. Every CLI run takes this
-// path: the token is issued for the run alone and ended once the CLI has
-// exited, however it exited, and the response log is told when the final
-// message was discarded for a written answer. The Answer says whether the
-// model wrote ex's answer through the MCP.
-func (s *AIService) run(settings domain.Settings, op, prompt, cwd string, ex domain.Exchange) (Answer, error) {
+// run runs the CLI once for the task named name with data, in cwd, under the
+// containment floor with its MCP token bound to ex and its Sieve verbs those
+// the task's output allows. Its prompt is built once the run's backend has said
+// whether it carries the Sieve tools. Every CLI run takes this path: the token
+// is issued for the run alone and ended once the CLI has exited, however it
+// exited, and the response log is told when the final message was discarded
+// for a written answer. The Answer says whether the model wrote ex's answer
+// through the MCP.
+func (s *AIService) run(settings domain.Settings, name string, data TaskData, cwd string, ex domain.Exchange) (Answer, error) {
+	task, err := s.prompts.Task(name)
+	if err != nil {
+		return Answer{}, err
+	}
 	binary, dialect := settings.ResolveCLI()
-	profile, token := s.profileFor(ex)
+	profile, token := s.profileFor(ex, task.Writes())
 	held := s.runOf(token)
-	text, err := s.runner.Run(op, binary, dialect, prompt, settings.Model, s.timeoutFor(settings, op), cwd, profile, s.storePath, held.responseNote)
+	run := Run{
+		Task:       task,
+		CLI:        CLI{Binary: binary, Dialect: dialect, Model: settings.Model, TimeoutSecs: s.timeoutFor(settings, name)},
+		Profile:    profile,
+		Cwd:        cwd,
+		LibraryDir: s.storePath,
+	}
+	run.Prompt = s.prompts.Prompt(task, data, run.carriesSieveTools())
+	text, err := s.runner.Run(run, held.responseNote)
 	written := held.end()
 	if err != nil {
 		return Answer{}, err
@@ -241,16 +260,8 @@ func (s *AIService) RunExplain(content, history, question string, ex domain.Exch
 	if settings.Tier() == domain.TierDumb {
 		return Answer{}, fmt.Errorf("explain not available in dumb mode")
 	}
-	prompt, _ := s.prompts.GetPromptContent("explain")
-	noteCwd := s.noteDir(ex.Container)
-
-	contentType := s.detectContentType(content)
-	p := strings.ReplaceAll(prompt, "{type}", contentType)
-	p = strings.ReplaceAll(p, "{content}", content)
-	p = strings.ReplaceAll(p, "{history}", history)
-	p = strings.ReplaceAll(p, "{action}", question)
-
-	return s.run(settings, "explain", p, noteCwd, ex)
+	data := ThreadData{ContentType: s.detectContentType(content), Content: content, History: history, Action: question}
+	return s.run(settings, "explain", data, s.noteDir(ex.Container), ex)
 }
 
 // RunAsk asks the AI a question with the given content as context. history may
@@ -260,16 +271,8 @@ func (s *AIService) RunAsk(content, history, question string, ex domain.Exchange
 	if settings.Tier() == domain.TierDumb {
 		return Answer{}, fmt.Errorf("ask not available in dumb mode")
 	}
-	prompt, _ := s.prompts.GetPromptContent("ask")
-	noteCwd := s.noteDir(ex.Container)
-
-	contentType := s.detectContentType(content)
-	p := strings.ReplaceAll(prompt, "{type}", contentType)
-	p = strings.ReplaceAll(p, "{content}", content)
-	p = strings.ReplaceAll(p, "{history}", history)
-	p = strings.ReplaceAll(p, "{action}", question)
-
-	return s.run(settings, "ask", p, noteCwd, ex)
+	data := ThreadData{ContentType: s.detectContentType(content), Content: content, History: history, Action: question}
+	return s.run(settings, "ask", data, s.noteDir(ex.Container), ex)
 }
 
 // RunBtw answers a popup command's question for the exchange ex, the command's
@@ -282,17 +285,12 @@ func (s *AIService) RunBtw(question, selection, docTitle, docSummary string, ex 
 	if settings.Tier() == domain.TierDumb {
 		return Answer{}, fmt.Errorf("btw not available in dumb mode")
 	}
-	prompt, _ := s.prompts.GetPromptContent("btw")
 	cwd := s.storePath
 	if ex.Container != "" {
 		cwd = s.noteDir(ex.Container)
 	}
-	p := strings.ReplaceAll(prompt, "{question}", question)
-	p = strings.ReplaceAll(p, "{selection}", selection)
-	p = strings.ReplaceAll(p, "{doc_title}", docTitle)
-	p = strings.ReplaceAll(p, "{doc_summary}", docSummary)
-	p = strings.ReplaceAll(p, "{doc_uuid}", ex.Container)
-	return s.run(settings, "btw", p, cwd, ex)
+	data := BtwData{Question: question, Selection: selection, DocTitle: docTitle, DocSummary: docSummary, DocUUID: ex.Container}
+	return s.run(settings, "btw", data, cwd, ex)
 }
 
 // Tier exposes the current capability tier so AI-backed commands can fail
@@ -316,11 +314,8 @@ func (s *AIService) DescribeImage(uuid string, src string, blkId string) (domain
 		return domain.ImageDesc{}, fmt.Errorf("image file not found for block %s: %w", blkId, err)
 	}
 
-	prompt, _ := s.prompts.GetPromptContent("image")
 	logger.Info("About to Describe", "path", imagePath)
-	p := strings.ReplaceAll(prompt, "{image_filename}", filepath.Base(imagePath))
-	cwd := filepath.Dir(imagePath)
-	resp, err := s.run(settings, "image", p, cwd, domain.Exchange{Container: uuid})
+	resp, err := s.run(settings, "image", ImageData{File: filepath.Base(imagePath)}, filepath.Dir(imagePath), domain.Exchange{Container: uuid})
 	if err != nil {
 		return domain.ImageDesc{}, err
 	}
@@ -358,16 +353,10 @@ func (s *AIService) DescribeNote(uuid string, pages []domain.Address) (domain.No
 		} else if filepath.Dir(path) != cwd {
 			return domain.NoteMetadata{}, fmt.Errorf("note %s: page image %s is not beside %s", uuid, page, cwd)
 		}
-		files = append(files, fmt.Sprintf("%d. %s", i+1, filepath.Base(path)))
+		files = append(files, filepath.Base(path))
 	}
-	categories := strings.Join(s.libraryFolders(), ", ")
-	if categories == "" {
-		categories = "(none)"
-	}
-	prompt, _ := s.prompts.GetPromptContent("note-meta")
-	p := strings.ReplaceAll(prompt, "{page_files}", strings.Join(files, "\n"))
-	p = strings.ReplaceAll(p, "{category_list}", categories)
-	resp, err := s.run(settings, "note-meta", p, cwd, domain.Exchange{Container: uuid})
+	data := NoteMetaData{Pages: files, Categories: s.libraryFolders()}
+	resp, err := s.run(settings, "note-meta", data, cwd, domain.Exchange{Container: uuid})
 	if err != nil {
 		return domain.NoteMetadata{}, err
 	}
@@ -391,9 +380,7 @@ func (s *AIService) TranscribePage(uuid string, page domain.Address) (domain.Pag
 	if err != nil {
 		return domain.PageTranscript{}, fmt.Errorf("note %s: page image %s: %w", uuid, page, err)
 	}
-	prompt, _ := s.prompts.GetPromptContent("page-transcript")
-	p := strings.ReplaceAll(prompt, "{page_file}", filepath.Base(path))
-	resp, err := s.run(settings, "page-transcript", p, filepath.Dir(path), domain.Exchange{Container: uuid})
+	resp, err := s.run(settings, "page-transcript", PageTranscriptData{File: filepath.Base(path)}, filepath.Dir(path), domain.Exchange{Container: uuid})
 	if err != nil {
 		return domain.PageTranscript{}, err
 	}
@@ -428,15 +415,11 @@ func (s *AIService) assetPath(uuid, src string) (string, error) {
 // snippet. Returns the lowercase language name or empty string.
 func (s *AIService) RefineLanguage(content, currentLanguage, detectionMethod string) (string, error) {
 	settings := s.state.LoadSettings()
-	prompt, _ := s.prompts.GetPromptContent("refine")
-	p := strings.ReplaceAll(prompt, "{content}", content)
-	p = strings.ReplaceAll(p, "{current_language}", currentLanguage)
-	p = strings.ReplaceAll(p, "{detection_method}", detectionMethod)
-
 	// cwd is never unset: refine has no note context, so fall back to the library
 	// root rather than the process cwd (which on a Finder/Dock-launched macOS app
 	// is /). #41.
-	resp, err := s.run(settings, "refine", p, s.storePath, domain.Exchange{})
+	data := RefineData{Content: content, CurrentLanguage: currentLanguage, DetectionMethod: detectionMethod}
+	resp, err := s.run(settings, "refine", data, s.storePath, domain.Exchange{})
 	if err != nil {
 		return "", err
 	}
@@ -531,41 +514,19 @@ func (s *AIService) timeoutFor(settings domain.Settings, promptName string) int 
 }
 
 func (s *AIService) runEvaluateBuffer(meta domain.DocumentMeta, body []byte, settings domain.Settings) (*domain.FilingRecommendation, error) {
-	prompt, _ := s.prompts.GetPromptContent("file")
-	folders := s.libraryFolders()
-
-	versionStr := fmt.Sprintf("%d", meta.Version())
-	if versionStr == "0" {
-		versionStr = "1"
+	data := FilingData{
+		Folders:    s.libraryFolders(),
+		Now:        time.Now(),
+		Created:    meta.Created(),
+		Modified:   meta.Modified(),
+		FocusCount: meta.FocusCount(),
+		Version:    meta.Version(),
+		Content:    string(body),
 	}
-	focusCountStr := fmt.Sprintf("%d", meta.FocusCount())
-
-	createdStr := "unknown"
-	if c := meta.Created(); !c.IsZero() {
-		createdStr = c.Format("2006-01-02T15:04:05")
-	}
-	modifiedStr := "unknown"
-	if m := meta.Modified(); !m.IsZero() {
-		modifiedStr = m.Format("2006-01-02T15:04:05")
-	}
-
-	folderList := strings.Join(folders, ", ")
-	if folderList == "" {
-		folderList = "(none yet)"
-	}
-
-	p := strings.ReplaceAll(prompt, "{folder_list}", folderList)
-	p = strings.ReplaceAll(p, "{version}", versionStr)
-	p = strings.ReplaceAll(p, "{focus_count}", focusCountStr)
-	p = strings.ReplaceAll(p, "{created}", createdStr)
-	p = strings.ReplaceAll(p, "{modified}", modifiedStr)
-	p = strings.ReplaceAll(p, "{now}", time.Now().Format(time.RFC3339))
-	p = strings.ReplaceAll(p, "{content}", string(body))
-
 	// cwd is never unset: the filing evaluation reads no note files, so fall back
 	// to the library root rather than the process cwd (/ on a Finder-launched
 	// macOS app). #41.
-	resp, err := s.run(settings, "file", p, s.storePath, domain.Exchange{})
+	resp, err := s.run(settings, "file", data, s.storePath, domain.Exchange{})
 	if err != nil {
 		return nil, err
 	}
@@ -699,20 +660,17 @@ func (s *AIService) extractFirstHeading(content string) string {
 	return ""
 }
 
-// RunWebClip retrieves a URL via the configured CLI using the overridable prompt
-// for the given mode ("web-clip-fetch" or "web-clip-summarise"), runs image
-// localisation on the result, and returns (title, content, error).
-// docContent is the current document body (used by Summarise mode for context).
+// RunWebClip retrieves a URL via the configured CLI with the task for the given
+// mode (web-clip-summarise for "summarise", web-clip-fetch otherwise), runs
+// image localisation on the result, and returns (title, content, error).
+// docContent is the current document body (the summarise task's context).
 func (s *AIService) RunWebClip(uuid, id, source, mode, docContent string) (title, content string, err error) {
 	settings := s.state.LoadSettings()
 
-	promptName := "web-clip-fetch"
+	taskName, data := "web-clip-fetch", TaskData(WebClipFetchData{Source: source})
 	if mode == "summarise" {
-		promptName = "web-clip-summarise"
+		taskName, data = "web-clip-summarise", WebClipSummariseData{Source: source, Document: docContent}
 	}
-	promptTemplate, _ := s.prompts.GetPromptContent(promptName)
-	prompt := strings.ReplaceAll(promptTemplate, "{source}", source)
-	prompt = strings.ReplaceAll(prompt, "{document}", docContent)
 
 	var doc domain.Document
 	var loadErr error
@@ -729,7 +687,7 @@ func (s *AIService) RunWebClip(uuid, id, source, mode, docContent string) (title
 		cwd = docDir
 	}
 
-	raw, err := s.run(settings, promptName, prompt, cwd, domain.Exchange{Container: uuid})
+	raw, err := s.run(settings, taskName, data, cwd, domain.Exchange{Container: uuid})
 	if err != nil {
 		return "", "", err
 	}

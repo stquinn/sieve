@@ -7,7 +7,7 @@
       onclick="window.sieveWorkspace.open('{{.ID}}')"
       class="sidebar__file"
       style="display: flex; align-items: center; gap: 0.5rem; width: 100%; border: none; height: 28px; font-size: 14px; padding: 0 1rem; text-align: left; overflow: hidden; text-overflow: ellipsis; box-sizing: border-box;"
-      title="{{if .IsVirtual}}Baked-in Default{{else}}User Override: {{.Path}}{{end}}"
+      title="{{if .IsVirtual}}No addendum{{else}}Addendum: {{.Path}}{{end}}"
       data-ctx-id="{{.ID}}"
       data-ctx-type="prompt"
       data-ctx-name="{{.DisplayName}}"

@@ -101,12 +101,12 @@ func (h *EditorHandler) handleDocumentSave(w http.ResponseWriter, r *http.Reques
 
 	h.recordTabMode(req.UUID, req.Mode)
 
-	if err := h.ServiceProvider.Prompts.SavePrompt(name, req.Body); err != nil {
+	if err := h.ServiceProvider.Prompts.SaveAddendum(name, req.Body); err != nil {
 		http.Error(w, "save failed", http.StatusInternalServerError)
 		return
 	}
 	// Version 0, here and in the response below, is the truth and not a placeholder:
-	// a prompt override is a plain file the store writes with no metadata and no
+	// a prompt addendum is a plain file the store writes with no metadata and no
 	// version history, so there is no number to report. The saved-fact's listeners
 	// read 0 as "this container cannot order its saves".
 	if h.EmitContainerSaved != nil {

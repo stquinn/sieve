@@ -4,104 +4,148 @@ import (
 	"fmt"
 	"sieve/sieve/domain"
 	"sieve/store"
+	"strings"
 )
 
-// PromptEntry represents a prompt available in the system.
+// PromptEntry represents a task in the Prompts dialog.
 type PromptEntry struct {
 	ID          string `json:"id"`          // "prompt:" + Name — stable opaque ID for the frontend
 	Name        string `json:"name"`        // e.g. "file", "explain", "ask"
 	DisplayName string `json:"displayName"` // e.g. "Smart Filing"
-	Path        string `json:"path"`        // store-relative path if override exists, otherwise empty
-	IsVirtual   bool   `json:"isVirtual"`   // true if using baked-in default
+	Path        string `json:"path"`        // store-relative path of the addendum if there is one, otherwise empty
+	IsVirtual   bool   `json:"isVirtual"`   // true if the task has no addendum
 }
 
-// PromptService manages AI prompt templates through the Store interface.
-// Template overrides live in the Prompts category (store/{hostname}/prompts/).
+// PromptService owns the AI tasks and each task's addendum: the text this
+// installation adds to the task's brief, stored as {name}.addendum.md in the
+// Prompts category (store/{hostname}/prompts/). A {name}.md in that category
+// is never read.
 type PromptService struct {
-	st store.Store
+	st    store.Store
+	tasks []Task // in the order the Prompts dialog lists them
 }
 
-// NewPromptService creates a PromptService backed by st.
+// NewPromptService creates a PromptService backed by st and removes from the
+// Prompts category each {name}.md of a declared task, which no run reads.
 func NewPromptService(st store.Store) (*PromptService, error) {
 	if err := st.PrepareCategory(domain.Prompts); err != nil {
 		return nil, err
 	}
-	return &PromptService{st: st}, nil
+	ps := &PromptService{st: st, tasks: []Task{
+		{Name: "file", DisplayName: "Smart Filing", Output: Data, Brief: Layer{Heading: briefHeading, Text: DefaultFilingPrompt}},
+		{Name: "explain", DisplayName: "Explain Content", Output: Content, Brief: Layer{Heading: briefHeading, Text: DefaultExplainPrompt}},
+		{Name: "ask", DisplayName: "In-context Chat", Output: Content, Brief: Layer{Heading: briefHeading, Text: DefaultAskPrompt}},
+		{Name: "btw", DisplayName: "Quick Answer (/btw)", Output: Content, Brief: Layer{Heading: briefHeading, Text: DefaultBtwPrompt}},
+		{Name: "refine", DisplayName: "Language Detection", Output: Data, Brief: Layer{Heading: briefHeading, Text: DefaultRefinePrompt}},
+		{Name: "image", DisplayName: "Describe Image", Output: Data, Brief: Layer{Heading: briefHeading, Text: DefaultImagePrompt}},
+		{Name: "note-meta", DisplayName: "Name Handwritten Note", Output: Data, Brief: Layer{Heading: briefHeading, Text: DefaultNoteMetaPrompt}},
+		{Name: "page-transcript", DisplayName: "Transcribe Handwritten Page", Output: Data, Brief: Layer{Heading: briefHeading, Text: DefaultPageTranscriptPrompt}},
+		{Name: "web-clip-fetch", DisplayName: "Web Clip — Fetch", Output: Data, Brief: Layer{Heading: briefHeading, Text: DefaultWebClipFetchPrompt}},
+		{Name: "web-clip-summarise", DisplayName: "Web Clip — Summarise", Output: Data, Brief: Layer{Heading: briefHeading, Text: DefaultWebClipSummarisePrompt}},
+	}}
+	for _, t := range ps.tasks {
+		old, err := st.Load(domain.Prompts, t.Name+".md")
+		if err != nil {
+			continue
+		}
+		if err := st.Delete(old); err != nil {
+			return nil, fmt.Errorf("remove the old override of %s: %w", t.Name, err)
+		}
+	}
+	return ps, nil
 }
 
-// GetPromptContent returns the prompt template for name. If an override file
-// exists in the Store, it is used; otherwise the baked-in default is returned.
-func (ps *PromptService) GetPromptContent(name string) (string, error) {
-	s, err := ps.st.Load(domain.Prompts, name+".md")
-	if err == nil {
-		return string(s.Body()), nil
+// Task returns the task named name.
+func (ps *PromptService) Task(name string) (Task, error) {
+	for _, t := range ps.tasks {
+		if t.Name == name {
+			return t, nil
+		}
 	}
-	// Fallback to default constants
-	switch name {
-	case "file":
-		return DefaultFilingPrompt, nil
-	case "explain":
-		return DefaultExplainPrompt, nil
-	case "ask":
-		return DefaultAskPrompt, nil
-	case "btw":
-		return DefaultBtwPrompt, nil
-	case "image":
-		return DefaultImagePrompt, nil
-	case "note-meta":
-		return DefaultNoteMetaPrompt, nil
-	case "page-transcript":
-		return DefaultPageTranscriptPrompt, nil
-	case "refine":
-		return DefaultRefinePrompt, nil
-	case "web-clip-fetch":
-		return DefaultWebClipFetchPrompt, nil
-	case "web-clip-summarise":
-		return DefaultWebClipSummarisePrompt, nil
-	default:
-		return "", fmt.Errorf("unknown prompt: %s", name)
-	}
+	return Task{}, fmt.Errorf("unknown prompt: %s", name)
 }
 
-// SavePrompt persists a prompt override to the Store.
-func (ps *PromptService) SavePrompt(name string, content string) error {
-	_, err := ps.st.CreateText(domain.Prompts, name+".md", []byte(content))
+// Prompt is task's prompt for one run with data: the framework's Background,
+// a Delivery layer when the task answers (Task.Answers), the task's brief, its
+// addendum when it has one, and data's values. sieveTools says whether the run
+// carries the Sieve tools; the framework's layers speak of them only when it
+// does.
+func (ps *PromptService) Prompt(task Task, data TaskData, sieveTools bool) Prompt {
+	p := Prompt{
+		Background: Layer{Heading: backgroundHeading, Text: sieveBackground},
+		Brief:      task.Brief,
+		Data:       Layer{Heading: dataHeading, Text: data.Text()},
+	}
+	if text := ps.loadAddendum(task.Name); text != "" {
+		p.Addendum = Layer{Heading: addendumHeading, Text: text}
+	}
+	if sieveTools {
+		p.Background.Text += "\n\n" + sieveToolsBackground
+	}
+	if task.Writes() {
+		p.Delivery = Layer{Heading: deliveryHeading, Text: answerPlainGuidance}
+		if sieveTools {
+			p.Delivery.Text = answerToolGuidance
+		}
+	}
+	return p
+}
+
+// addendumKey is the key of the addendum of the task named name.
+func (ps *PromptService) addendumKey(name string) string { return name + ".addendum.md" }
+
+// loadAddendum returns the stored addendum of the task named name, empty when
+// it has none.
+func (ps *PromptService) loadAddendum(name string) string {
+	s, err := ps.st.Load(domain.Prompts, ps.addendumKey(name))
+	if err != nil {
+		return ""
+	}
+	return string(s.Body())
+}
+
+// Addendum returns the addendum of the task named name: empty text when the
+// task has none, never its brief.
+func (ps *PromptService) Addendum(name string) (string, error) {
+	if _, err := ps.Task(name); err != nil {
+		return "", err
+	}
+	return ps.loadAddendum(name), nil
+}
+
+// SaveAddendum stores text as the addendum of the task named name. Empty or
+// whitespace-only text deletes it: no empty addendum is stored.
+func (ps *PromptService) SaveAddendum(name string, text string) error {
+	if _, err := ps.Task(name); err != nil {
+		return err
+	}
+	if strings.TrimSpace(text) == "" {
+		return ps.DeleteAddendum(name)
+	}
+	_, err := ps.st.CreateText(domain.Prompts, ps.addendumKey(name), []byte(text))
 	return err
 }
 
-// DeletePrompt removes a prompt override from the Store.
-func (ps *PromptService) DeletePrompt(name string) error {
-	s, err := ps.st.Load(domain.Prompts, name+".md")
+// DeleteAddendum removes the addendum of the task named name; a task with none
+// is left as it is.
+func (ps *PromptService) DeleteAddendum(name string) error {
+	s, err := ps.st.Load(domain.Prompts, ps.addendumKey(name))
 	if err != nil {
-		return nil // Already deleted or doesn't exist
+		return nil
 	}
 	return ps.st.Delete(s)
 }
 
-// ListPrompts returns all standard prompts with their virtualization status.
+// ListPrompts returns every task's entry, with whether it has an addendum.
 func (ps *PromptService) ListPrompts() []PromptEntry {
-	names := []string{"file", "explain", "ask", "btw", "refine", "image", "note-meta", "page-transcript", "web-clip-fetch", "web-clip-summarise"}
-	displayNames := map[string]string{
-		"file":               "Smart Filing",
-		"explain":            "Explain Content",
-		"ask":                "In-context Chat",
-		"btw":                "Quick Answer (/btw)",
-		"refine":             "Language Detection",
-		"image":              "Describe Image",
-		"note-meta":          "Name Handwritten Note",
-		"page-transcript":    "Transcribe Handwritten Page",
-		"web-clip-fetch":     "Web Clip — Fetch",
-		"web-clip-summarise": "Web Clip — Summarise",
-	}
-
-	out := make([]PromptEntry, 0, len(names))
-	for _, name := range names {
+	out := make([]PromptEntry, 0, len(ps.tasks))
+	for _, t := range ps.tasks {
 		p := PromptEntry{
-			ID:          "prompt:" + name,
-			Name:        name,
-			DisplayName: displayNames[name],
+			ID:          "prompt:" + t.Name,
+			Name:        t.Name,
+			DisplayName: t.DisplayName,
 		}
-		if s, err := ps.st.Load(domain.Prompts, name+".md"); err == nil {
+		if s, err := ps.st.Load(domain.Prompts, ps.addendumKey(t.Name)); err == nil {
 			p.IsVirtual = false
 			p.Path = s.ExternalRef()
 		} else {
@@ -112,27 +156,45 @@ func (ps *PromptService) ListPrompts() []PromptEntry {
 	return out
 }
 
-// DefaultPrompts baked into the binary to provide zero-config AI interactions.
-// Users can override these by editing the copies written to store/{hostname}/prompts/
-// and modifying settings.json.
-// DefaultExplainPrompt and DefaultAskPrompt are intentionally separate constants
-// even though they share most text — each can be overridden independently by the user.
+// sieveBackground is the Background layer of every prompt: what Sieve is and
+// how a run reads. sieveToolsBackground follows it when the run carries the
+// Sieve tools.
+const sieveBackground = `You are working inside Sieve, a personal tool for notes and thinking. What Sieve keeps is made of blocks: prose, code, a diagram, an image, a link card and others. A note is an ordered list of blocks; the other things Sieve keeps, such as a handwritten notebook or a conversation, hold blocks in their own way. Everything in Sieve has a sieve:// address. Use an address exactly as you were given it; never construct one.
+
+Work silently: do not describe your searches, tool calls or reasoning.
+
+Read only the files this prompt names. Do not scan the disk, and draw no conclusion from a file's name or path.`
+
+const sieveToolsBackground = `The Sieve tools read the user's library: search it, read a note, or read whatever a sieve:// address names.`
+
+// directAnswerOnly closes every Delivery layer.
+const directAnswerOnly = `- DIRECT ANSWER ONLY: The answer must only contain the answer to the user's question: no commentary on your work, the tools you used or your search.`
+
+// answerToolGuidance is the Delivery layer of a run that carries the Sieve
+// tools: its answer may be written as blocks with add_to_answer.
+const answerToolGuidance = `- ANSWER IN BLOCKS OR TEXT: You may write your answer as Sieve blocks with the add_to_answer tool, one block per call, in reading order. Whenever the answer holds anything richer than running text (a diagram, code, a table, other structured content), consider the block type that fits it; describe_answer lists them. A plain text answer may simply be your final message, in clean markdown. Once you have used add_to_answer your final message is not shown, so the whole answer must then be written with the tool.
+
+` + directAnswerOnly
+
+// answerPlainGuidance is the Delivery layer of a run without the Sieve tools.
+const answerPlainGuidance = `Write your answer as your final message, in clean markdown.
+
+` + directAnswerOnly
+
+// The Default*Prompt constants are the tasks' briefs: what each job is for and
+// what it must return. A run's values follow a brief in its Data layer.
 
 const DefaultFilingPrompt = `
 Given the following content, decide if it is worth keeping
 as a permanent note in a knowledge stash.
 
-Existing folders: {folder_list}
 Select the most appropriate existing folder for this content.
 If the content belongs to a distinct topic not covered by existing folders, suggest a new, appropriately named folder.
 If the content is too generic, leave the folder empty for root.
 
-### Document Context:
-- Current Time: {now}
-- Created: {created}
-- Modified: {modified}
-- Focus Signal: {focus_count} (Indicates number of times the file has been opened or 5 minute incrememtns of it being in focus)
-- Iteration: {version} (Indicates manual user refinement)
+### Signals (their values are under Document Context in the data):
+- Focus Signal: the number of times the file has been opened, or of 5 minute increments it has spent in focus.
+- Iteration: manual refinement by the user.
 
 ### Evaluation Criteria (BE CRITICAL):
 - Information Density: Is the content substantial? Gibberish, single sentences, or trivial tests should be discarded.
@@ -199,28 +261,13 @@ Respond ONLY with raw JSON. DO NOT use markdown code fences (triple backticks). 
   "ai_justification": "brief heuristic explanation of why this was kept or discarded",
   "density_signals": ["signal1", "signal2"]
 }
-
-Content:
-{content}
-
 `
-
-// answerToolGuidance is what every prompt whose run may write its answer with
-// add_to_answer tells the model of the tool: Ask, Explain and the popup
-// commands' btw template.
-const answerToolGuidance = `- ANSWER IN BLOCKS OR TEXT: You may write your answer as Sieve blocks with the add_to_answer tool, one block per call, in reading order. Whenever the answer holds anything richer than running text (a diagram, code, a table, other structured content), consider the block type that fits it; describe_answer lists them. A plain text answer may simply be your final message, in clean markdown. Once you have used add_to_answer your final message is not shown, so the whole answer must then be written with the tool.
-
-- DIRECT ANSWER ONLY: The answer must only contain the answer to the user's question: no commentary on your work, the tools you used or your search.`
 
 const DefaultExplainPrompt = `
 [PERSONA]
-Act as a highly efficient research assistant. Provide the answer concisely with insight, drawing connections from the available files, but never explain your search process. If you find a connection, present it as a finished thought.
+Act as a highly efficient research assistant. Provide the answer concisely with insight, drawing connections from the user's notes.
 
 [RESPONSE PROTOCOL]
-
-- SILENT OPERATION: Perform all file searches, MCP tool calls, and image analysis silently. Do not list the files you are checking, the tools you are calling, or your internal reasoning steps.
-
-` + answerToolGuidance + `
 
 - SYNTHESIZE: If information is gathered from multiple files (e.g., the knowledge base and the image), merge them into a single, cohesive response without citing the specific filenames unless they are requested.
 
@@ -233,41 +280,13 @@ Each THREAD entry has a NODE ID, a label indicating what it refers to (QUESTION 
 
 TARGET is the subject of the question and the sole source of document truth; ground anything you say about the document in TARGET as it stands now.
 THREAD is the conversation so far about this TARGET. Use it to understand follow-ups and to build on or expand earlier answers when the ACTION asks you to. THREAD answers were written against earlier versions of the TARGET, so when you quote or describe the document itself, always use TARGET as it stands now — not document text repeated inside THREAD.
-
-File Access Scope:
-You are  authorized to access and process the specific files or paths named within the user's prompt. Do not perform exploratory file system operations, recursive directory walks, or search for "relevant" files on the local disk unless they are specifically targeted by name.
-Do not draw any conclusion based on file names or paths.  Use only content of referenced file or this prompt to derive meaning.
-
-Tool Usage:
-You are encouraged to use available tools/MCP servers to fulfill the request, provided they do not involve unauthorized local disk scanning.
-
-Content type: {type}
-
-TARGET:
-{content}
-
----
----
-
-THREAD:
-{history}
-
----
----
-
-ACTION:
-{action}
 `
 
 const DefaultAskPrompt = `
 [PERSONA]
-Act as a highly efficient research assistant. Provide the answer concisely with insight, drawing connections from the available files, but never explain your search process. If you find a connection, present it as a finished thought.
+Act as a highly efficient research assistant. Provide the answer concisely with insight, drawing connections from the user's notes.
 
 [RESPONSE PROTOCOL]
-
-- SILENT OPERATION: Perform all file searches, MCP tool calls, and image analysis silently. Do not list the files you are checking, the tools you are calling, or your internal reasoning steps.
-
-` + answerToolGuidance + `
 
 - SYNTHESIZE: If information is gathered from multiple files (e.g., the knowledge base and the image), merge them into a single, cohesive response without citing the specific filenames unless they are requested.
 
@@ -279,33 +298,9 @@ Each THREAD entry has a NODE ID, a label indicating what it refers to (QUESTION 
 
 TARGET is the subject of the question and the sole source of document truth; ground anything you say about the document in TARGET as it stands now.
 THREAD is the conversation so far about this TARGET. Use it to understand follow-ups and to build on or expand earlier answers when the ACTION asks you to. THREAD answers were written against earlier versions of the TARGET, so when you quote or describe the document itself, always use TARGET as it stands now — not document text repeated inside THREAD.
-
-File Access Scope:
-You are  authorized to access and process the specific files or paths named within the user's prompt. Do not perform exploratory file system operations, recursive directory walks, or search for "relevant" files on the local disk unless they are specifically targeted by name.
-Do not draw any conclusion based on file names or paths.  Use only content of referenced file or this prompt to derive meaning.
-
-Tool Usage:
-You are encouraged to use available tools/MCP servers to fulfill the request, provided they do not involve unauthorized local disk scanning.
-
-Content type: {type}
-
-TARGET:
-{content}
-
----
----
-
-THREAD:
-{history}
-
----
----
-
-ACTION:
-{action}
 `
 
-const DefaultImagePrompt = `Describe the image file {image_filename} and help me describe and categorise it.
+const DefaultImagePrompt = `Describe the image file and help me describe and categorise it.
 
 Respond ONLY with valid JSON. No preamble.
 
@@ -315,14 +310,13 @@ Respond ONLY with valid JSON. No preamble.
 }
 `
 
-const DefaultNoteMetaPrompt = `These image files, in this directory, are the pages of one handwritten note, in page order:
-{page_files}
+const DefaultNoteMetaPrompt = `The image files listed under Page files, in this directory, are the pages of one handwritten note, in page order.
 
 Open each one, read the handwriting and look at any drawings, then describe the note as a whole.
 
 - title: a short, specific title saying what the note is about, in at most eight words. Never a generic title such as "Notes", "Untitled" or "Meeting notes", and never a date alone.
 - keywords: up to 8 keywords or short phrases for what the note covers.
-- categories: from 0 to 3 categories, chosen only from these: {category_list}. Give none when none fits.
+- categories: from 0 to 3 categories, chosen only from the Categories listed. Give none when none fits.
 - summary: two or three plain sentences saying what the note holds.
 
 Respond ONLY with raw JSON. DO NOT use markdown code fences (triple backticks). No preamble or explanation.
@@ -334,7 +328,7 @@ Respond ONLY with raw JSON. DO NOT use markdown code fences (triple backticks). 
 }
 `
 
-const DefaultPageTranscriptPrompt = `The image file {page_file}, in this directory, is one page of a handwritten note.
+const DefaultPageTranscriptPrompt = `The image file named under Page file, in this directory, is one page of a handwritten note.
 
 Open it and read the whole page, from top to bottom, as a list of parts in the order they appear on the page.
 
@@ -354,19 +348,11 @@ Respond ONLY with raw JSON. DO NOT use markdown code fences (triple backticks). 
 const DefaultRefinePrompt = `Identify the programming language of this code snippet.
 Reply with ONLY the lowercase language name (e.g. python, go, javascript, typescript, rust, java, c, cpp, sql, bash, yaml, json, xml, html, css, ruby, php, swift, kotlin, dart, markdown, csharp, toml, ini, dockerfile, makefile, lua, powershell).
 If you cannot identify a specific language confidently, reply with exactly: text
-
-Current Detection State (use as a signal/context, but make up your own mind):
-- Current Language: {current_language}
-- Detection Method: {detection_method}
-
-Code:
-{content}
 `
 
 const DefaultWebClipFetchPrompt = `Please retrieve the content at the following URL and return it as clean, well-structured markdown. Preserve all meaningful content including headings, lists, tables, and code blocks.
 Please ensure to grab any relevant images and include those as well.
 Do not summarise - preserve content as is.  Your job is to simply retrieve the document and translate to markdown as per the instructions above.
-URL: {source}
 `
 
 const DefaultWebClipSummarisePrompt = `Please retrieve the content at the following URL and return a
@@ -375,27 +361,14 @@ const DefaultWebClipSummarisePrompt = `Please retrieve the content at the follow
   boilerplate, author bios, and related links.
   Only include an image if it directly illustrates a key point in your summary and cannot be adequately
   conveyed in text alone, and it relates to the document context below.
-  URL: {source}
-
-  Current document context:
-  {document}
   `
 
 const DefaultBtwPrompt = `You are answering a quick side-question a writer asked ("/btw") while working on a document. Answer the question concisely and directly.
 
-QUESTION:
-{question}
+- SELECTED TEXT: may be empty; if present, the question is likely about it.
+- BACKGROUND: ambient context for disambiguation only. Do not analyze the document, do not suggest edits, and do not mention it unless the question requires it.
 
-SELECTED TEXT (may be empty; if present, the question is likely about it):
-{selection}
-
-BACKGROUND — ambient context for disambiguation only. Do not analyze the document, do not suggest edits, and do not mention it unless the question requires it:
-- Document title: {doc_title}
-- Document summary: {doc_summary}
-- Document uuid: {doc_uuid}
-
-If, and only if, the question genuinely requires the document's actual content, call the Sieve MCP tool get_note with the bare uuid above to read it. Anything attached to this turn is addressed by a sieve:// uri instead, and those go to get_by_uri verbatim. Prefer answering directly without either.
+Read the document only if the question genuinely requires its content; prefer answering directly.
 
 Keep the answer short: a few sentences, or a compact list or snippet when clearer. No preamble, no closing questions.
-
-` + answerToolGuidance
+`

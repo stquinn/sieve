@@ -475,7 +475,7 @@ func TestFetchPage_RefusesOn403TimeoutNonHTMLAndEmpty(t *testing.T) {
 
 func TestFetchPage_RefusesWhenSessionHasNoDocument(t *testing.T) {
 	s := newTestServer(t)
-	_, _, err := s.fetchPage(context.Background(), nil, FetchPageInput{URL: "https://example.com"})
+	_, _, err := s.fetchPage(WithDocument(context.Background(), ""), nil, FetchPageInput{URL: "https://example.com"})
 	if err == nil || !strings.HasPrefix(err.Error(), "cannot retrieve:") {
 		t.Fatalf("unscoped fetch_page err = %v, want 'cannot retrieve:' refusal", err)
 	}
@@ -515,23 +515,25 @@ var holdings = map[domain.AnswerHolder]domain.AnswerHolding{
 
 // newAnswerServer is a server with answers opened over the real registry (prose
 // and code registered) and a stub writer for ex's holder alone, holding as that
-// holder's real writer does, and a token bound to ex.
-func newAnswerServer(t *testing.T, ex domain.Exchange) (*Server, *stubAnswerWriter, string) {
+// holder's real writer does, and a token bound to ex for a run that may answer
+// as writes says.
+func newAnswerServer(t *testing.T, ex domain.Exchange, writes bool) (*Server, *stubAnswerWriter, string) {
 	t.Helper()
 	s, _ := newTestServerWithDocs(t)
 	block.RegisterProcessor(processors.NewCodeBlockProcessor(block.BlockServices{}))
 	w := &stubAnswerWriter{holding: holdings[ex.Holder]}
 	s.OpenAnswers(block.GlobalRegistry(), map[domain.AnswerHolder]AnswerWriter{ex.Holder: w})
 	s.SetBaseURL("http://127.0.0.1:34115")
-	_, token := s.EndpointFor(ex)
+	_, token, _ := s.EndpointFor(ex, writes)
 	return s, w, token
 }
 
 // add_to_answer builds each block through the kind and appends it to the
 // exchange its token is bound to, the run's first block replacing an earlier
 // run's answer. A refusal — of the type, the map, the token or the write —
-// writes nothing and leaves the run with no written answer. Once the run has
-// ended, a call still holding its grant writes nothing.
+// writes nothing and leaves the run with no written answer, and a run whose
+// task returns data may call no write verb. Once the run has ended, a call
+// still holding its grant writes nothing.
 func TestAddToAnswer_AppendsToTheTokensExchange(t *testing.T) {
 	exchange := domain.Exchange{Container: "0198c1a0-0001-7000-8000-000000000001", Block: "0198c1a0-0001-7000-8000-000000000020"}
 	held := domain.Exchange{Block: "0198c1a0-0001-7000-8000-000000000021", Holder: domain.HeldByCommand}
@@ -541,6 +543,7 @@ func TestAddToAnswer_AppendsToTheTokensExchange(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
 		bound     domain.Exchange
+		data      bool // the run's task returns data, so it may not write
 		refuse    error
 		calls     []AddToAnswerInput
 		wantErr   []string
@@ -558,9 +561,11 @@ func TestAddToAnswer_AppendsToTheTokensExchange(t *testing.T) {
 			wantCalls: []answerAppend{{held, "prose", true}, {held, "code", false}}},
 		{name: "a token bound to a document alone answers nothing", bound: domain.Exchange{Container: exchange.Container},
 			calls: []AddToAnswerInput{prose}, wantErr: []string{"not answering"}},
+		{name: "a run whose task returns data writes no answer", bound: exchange, data: true,
+			calls: []AddToAnswerInput{prose}, wantErr: []string{"add_to_answer", "writes nothing into a document"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			s, w, token := newAnswerServer(t, tc.bound)
+			s, w, token := newAnswerServer(t, tc.bound, !tc.data)
 			w.refuse = tc.refuse
 			g, _ := s.grantOf(token)
 			ctx := g.bind(context.Background())
@@ -582,6 +587,9 @@ func TestAddToAnswer_AppendsToTheTokensExchange(t *testing.T) {
 			}
 			if fmt.Sprint(w.calls) != fmt.Sprint(tc.wantCalls) {
 				t.Errorf("appends = %+v, want %+v", w.calls, tc.wantCalls)
+			}
+			if _, _, err := s.describeAnswer(ctx, nil, struct{}{}); (err != nil) != tc.data {
+				t.Errorf("describe_answer: %v, want it refused exactly when the run may not write", err)
 			}
 			if got := s.EndRun(token); got != len(tc.wantCalls) {
 				t.Errorf("EndRun = %d written, want %d", got, len(tc.wantCalls))
@@ -623,7 +631,7 @@ func TestAnswerHolders_DecideWhatARunMayWrite(t *testing.T) {
 			refused: map[string]string{"plantuml": "a PlantUML diagram", "log": "every log", "link card": "every link card", "web clip": "every web clip", "image": "every image"}},
 	} {
 		t.Run(holder.name, func(t *testing.T) {
-			s, w, token := newAnswerServer(t, holder.ex)
+			s, w, token := newAnswerServer(t, holder.ex, true)
 			block.RegisterProcessor(processors.NewDiagramProcessor(block.BlockServices{}))
 			block.RegisterProcessor(processors.NewLogProcessor(block.BlockServices{}))
 			block.RegisterProcessor(processors.NewSmartCardProcessor(block.BlockServices{}))

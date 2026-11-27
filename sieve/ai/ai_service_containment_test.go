@@ -12,12 +12,14 @@ import (
 
 type fakeMCPEndpoint struct{ url, token string }
 
-func (f fakeMCPEndpoint) EndpointFor(domain.Exchange) (string, string) { return f.url, f.token }
-func (f fakeMCPEndpoint) EndRun(string) int                            { return 0 }
+func (f fakeMCPEndpoint) EndpointFor(domain.Exchange, bool) (string, string, []string) {
+	return f.url, f.token, nil
+}
+func (f fakeMCPEndpoint) EndRun(string) int { return 0 }
 
 // profileOf is the profile a run answering nothing renders.
 func profileOf(svc *AIService) domain.ContainmentProfile {
-	p, _ := svc.profileFor(domain.Exchange{})
+	p, _ := svc.profileFor(domain.Exchange{}, false)
 	return p
 }
 
@@ -78,7 +80,9 @@ func TestProfile_RendersSavedUserAdditions(t *testing.T) {
 	}
 
 	// End-to-end: the saved stdio server reaches the claude --mcp-config and allow list.
-	args := buildBaseArgs("claude", "", "prompt", p, "", root)
+	run := runFor("claude", p)
+	run.LibraryDir = root
+	args := run.args()
 	if cfg := flagValue(args, "--mcp-config"); !strings.Contains(cfg, "myserver") {
 		t.Errorf("user stdio server not injected into --mcp-config: %s", cfg)
 	}
@@ -182,18 +186,17 @@ func TestFloorCwd_NeverEmpty(t *testing.T) {
 	}
 }
 
-// captureRunner is a stub CLIRunner: it records the invocation and returns a
-// canned response instead of spawning a real CLI (CI has none installed).
+// captureRunner is a stub CLIRunner: it records the run and returns a canned
+// response instead of spawning a real CLI (CI has none installed).
 type captureRunner struct {
-	op, binary, dialect, prompt, model, cwd, libraryDir string
-	profile                                             domain.ContainmentProfile
-	ret                                                 string
-	err                                                 error
-	noted                                               string // what the run's ResponseNote said, asked as the real runner asks it
+	run   Run
+	ret   string
+	err   error
+	noted string // what the run's ResponseNote said, asked as the real runner asks it
 }
 
-func (c *captureRunner) Run(op, binary, dialect, prompt, model string, timeoutSecs int, cwd string, profile domain.ContainmentProfile, libraryDir string, note ResponseNote) (string, error) {
-	c.op, c.binary, c.dialect, c.prompt, c.model, c.cwd, c.libraryDir, c.profile = op, binary, dialect, prompt, model, cwd, libraryDir, profile
+func (c *captureRunner) Run(run Run, note ResponseNote) (string, error) {
+	c.run = run
 	if c.err == nil && note != nil {
 		c.noted = note()
 	}
@@ -221,9 +224,6 @@ func TestRefineLanguage_ThreadsProfileAndLibraryDir(t *testing.T) {
 	if err := state.SaveSettings(settings); err != nil {
 		t.Fatalf("SaveSettings: %v", err)
 	}
-	if _, err := fs.CreateText(domain.Prompts, "refine.txt", []byte("Language of: {content}")); err != nil {
-		t.Fatalf("write refine prompt: %v", err)
-	}
 
 	cap := &captureRunner{ret: "go"}
 	svc := &AIService{state: state, prompts: prompts, storePath: "/vault/library", runner: cap}
@@ -237,28 +237,28 @@ func TestRefineLanguage_ThreadsProfileAndLibraryDir(t *testing.T) {
 	}
 
 	// The library grant resolves to storePath.
-	if cap.libraryDir != "/vault/library" {
-		t.Errorf("libraryDir = %q, want /vault/library", cap.libraryDir)
+	if cap.run.LibraryDir != "/vault/library" {
+		t.Errorf("libraryDir = %q, want /vault/library", cap.run.LibraryDir)
 	}
 	// cwd must NEVER be unset: RefineLanguage has no note context, so it falls
 	// back to the library root rather than the process cwd (which on a Finder/
 	// Dock-launched macOS app is /). #41.
-	if cap.cwd != "/vault/library" {
-		t.Errorf("cwd = %q, want the library root /vault/library (never unset)", cap.cwd)
+	if cap.run.Cwd != "/vault/library" {
+		t.Errorf("cwd = %q, want the library root /vault/library (never unset)", cap.run.Cwd)
 	}
 	// The runner receives the default containment floor as CLI-neutral capability
 	// labels: Read + Text search + File search + Fetch, no write tools.
-	names := cap.profile.ToolNames()
+	names := cap.run.Profile.ToolNames()
 	if len(names) != 4 || names[3] != "Fetch" {
 		t.Errorf("profile tools = %v, want [Read Text search File search Fetch]", names)
 	}
-	for _, tg := range cap.profile.Tools {
+	for _, tg := range cap.run.Profile.Tools {
 		if tg.Label == "Write" || tg.Names["claude"] == "Edit" {
 			t.Errorf("default profile must not grant write tool %q", tg.Label)
 		}
 	}
-	if cap.binary != "claude" || cap.dialect != "claude" {
-		t.Errorf("binary/dialect = %q/%q, want claude/claude", cap.binary, cap.dialect)
+	if cap.run.CLI.Binary != "claude" || cap.run.CLI.Dialect != "claude" {
+		t.Errorf("binary/dialect = %q/%q, want claude/claude", cap.run.CLI.Binary, cap.run.CLI.Dialect)
 	}
 }
 
@@ -283,9 +283,6 @@ func TestRefineLanguage_CLIPathOverridesBinaryNotDialect(t *testing.T) {
 	if err := state.SaveSettings(settings); err != nil {
 		t.Fatalf("SaveSettings: %v", err)
 	}
-	if _, err := fs.CreateText(domain.Prompts, "refine.txt", []byte("Language of: {content}")); err != nil {
-		t.Fatalf("write refine prompt: %v", err)
-	}
 
 	cap := &captureRunner{ret: "go"}
 	svc := &AIService{state: state, prompts: prompts, storePath: "/vault/library", runner: cap}
@@ -293,10 +290,10 @@ func TestRefineLanguage_CLIPathOverridesBinaryNotDialect(t *testing.T) {
 	if _, err := svc.RefineLanguage("func main() {}", "", ""); err != nil {
 		t.Fatalf("RefineLanguage: %v", err)
 	}
-	if cap.binary != "/opt/bin/claude-query.sh" {
-		t.Errorf("binary = %q, want the wrapper path", cap.binary)
+	if cap.run.CLI.Binary != "/opt/bin/claude-query.sh" {
+		t.Errorf("binary = %q, want the wrapper path", cap.run.CLI.Binary)
 	}
-	if cap.dialect != "claude" {
-		t.Errorf("dialect = %q, want claude (dropdown drives the dialect)", cap.dialect)
+	if cap.run.CLI.Dialect != "claude" {
+		t.Errorf("dialect = %q, want claude (dropdown drives the dialect)", cap.run.CLI.Dialect)
 	}
 }

@@ -13,6 +13,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"fmt"
 	"net/http"
 	"strings"
 	"sync"
@@ -28,16 +29,26 @@ import (
 type grantContextKey struct{}
 
 // runGrant is what one per-run bearer token is bound to: the exchange the run
-// may write into, how many elements it has written to that exchange's answer,
-// and whether the run has ended. Its mutex serialises a run's answer writes
-// with each other and with its end, so the first write is known and none lands
-// after the end.
+// may write into, whether it may call the write verbs at all, how many
+// elements it has written to that exchange's answer, and whether the run has
+// ended. Its mutex serialises a run's answer writes with each other and with
+// its end, so the first write is known and none lands after the end.
 type runGrant struct {
 	exchange domain.Exchange
+	writes   bool
 
 	mu      sync.Mutex
 	written int
 	ended   bool
+}
+
+// refuseWrite is nil when the run g is bound to may call a write verb, and
+// otherwise the refusal of verb. A nil grant may not write.
+func (g *runGrant) refuseWrite(verb string) error {
+	if g != nil && g.writes {
+		return nil
+	}
+	return fmt.Errorf("%s: this run returns its result to Sieve and writes nothing into a document", verb)
 }
 
 // bind returns ctx carrying g.
@@ -45,9 +56,10 @@ func (g *runGrant) bind(ctx context.Context) context.Context {
 	return context.WithValue(ctx, grantContextKey{}, g)
 }
 
-// WithDocument binds a target document UUID to ctx for side-effecting MCP verbs.
+// WithDocument binds a target document UUID to ctx for side-effecting MCP verbs,
+// with the right to call the write verbs.
 func WithDocument(ctx context.Context, docUUID string) context.Context {
-	return (&runGrant{exchange: domain.Exchange{Container: strings.TrimSpace(docUUID)}}).bind(ctx)
+	return (&runGrant{exchange: domain.Exchange{Container: strings.TrimSpace(docUUID)}, writes: true}).bind(ctx)
 }
 
 // DocumentFromContext returns the target document UUID bound to ctx, or empty string.
@@ -70,8 +82,12 @@ func DocumentFromContext(ctx context.Context) string {
 // and both MUST record the same bodyRead audit through one auditor, which is
 // what keeps bulk-read visible at a single boundary.
 //
-// Side-effecting verbs: fetch_page writes a readable HTML asset into the
-// calling job's own document (and nowhere else), returning its NodeDescriptor;
+// fetch_page fetches a web page for a run whose own fetch is blocked. It keeps
+// the readable HTML as an asset of the calling job's own document (and nowhere
+// else) and returns its NodeDescriptor; keeping the page changes nothing a
+// reader sees, so it is a read verb.
+//
+// Write verbs, which a run that returns its result to Sieve may not call:
 // add_to_answer, once answers are opened (OpenAnswers), appends one block to the
 // answer of the exchange the run's token is bound to, and describe_answer lists
 // the content types it takes.
@@ -88,9 +104,11 @@ type Server struct {
 	sdk     *mcpsdk.Server
 	handler http.Handler // StreamableHTTPHandler, built once
 
-	mu      sync.RWMutex
-	baseURL string               // e.g. "http://127.0.0.1:34115"; set once the listener is bound
-	tokens  map[string]*runGrant // valid per-run bearer tokens → what each is bound to
+	mu         sync.RWMutex
+	baseURL    string               // e.g. "http://127.0.0.1:34115"; set once the listener is bound
+	tokens     map[string]*runGrant // valid per-run bearer tokens → what each is bound to
+	readVerbs  []string             // the verbs that only read, in registration order
+	writeVerbs []string             // the verbs that write into a document: the answer verbs, once OpenAnswers has registered them
 }
 
 // pageFetchTimeout is fetch_page's deadline for retrieving one page.
@@ -119,34 +137,34 @@ func NewServer(documents *services.DocumentService, nodes NodeResolver, search S
 	}, nil)
 
 	mcpsdk.AddTool(sdk, &mcpsdk.Tool{
-		Name: "search",
+		Name: s.readVerb("search"),
 		Description: "Search the knowledge base by a case-insensitive substring matched against names, summaries and tags — never bodies. " +
 			"Finds filed notes (kind \"note\") and unfiled buffers (kind \"buffer\"); a buffer has no summary or tags, so it is found by its name alone. " +
 			"An empty query lists everything. Returns metadata only (never bodies). Optionally restrict to a folder, which leaves out buffers, as they have none.",
 	}, s.search)
 	mcpsdk.AddTool(sdk, &mcpsdk.Tool{
-		Name: "get_meta",
+		Name: s.readVerb("get_meta"),
 		Description: "Return the full metadata for one note by uuid (title, folder, tags, summary, timestamps, version, AI evaluation). No body. " +
 			"Takes a bare uuid only: a sieve:// uri belongs to get_by_uri.",
 	}, s.getMeta)
 	mcpsdk.AddTool(sdk, &mcpsdk.Tool{
-		Name: "get_note",
+		Name: s.readVerb("get_note"),
 		Description: "Return one note by uuid: its metadata plus the full markdown body. " +
 			"Use this when you have a bare uuid; a sieve:// uri belongs to get_by_uri, which takes it verbatim.",
 	}, s.getNote)
 	mcpsdk.AddTool(sdk, &mcpsdk.Tool{
-		Name: "get_by_uri",
+		Name: s.readVerb("get_by_uri"),
 		Description: "Return whatever a Sieve uri points at: its title, metadata and full markdown body. " +
 			"Pass the uri exactly as it appears in an ATTACHED DOCUMENTS manifest (e.g. sieve://{uuid}) — copy it, never construct one. " +
 			"A uri naming a file answers with kind \"asset\", no body, its size in bytes, and a path relative to the library root (a directory you are granted): read that path from disk, as no tool returns a file's bytes. " +
 			"A uri naming a whole container (sieve://{uuid}) also lists, under \"assets\", every file it holds — images, attachments, a notebook's page images and transcripts — each with its own uri to pass back here, its key, its size in bytes and its path.",
 	}, s.getByURI)
 	mcpsdk.AddTool(sdk, &mcpsdk.Tool{
-		Name:        "list_facets",
+		Name:        s.readVerb("list_facets"),
 		Description: "Return the knowledge base's orientation facets: folders with note counts and tags with counts.",
 	}, s.listFacets)
 	mcpsdk.AddTool(sdk, &mcpsdk.Tool{
-		Name: "fetch_page",
+		Name: s.readVerb("fetch_page"),
 		Description: "Fetch an http or https URL, extract its readable article content as HTML, and write it as an asset into the job's own document. " +
 			"Returns the asset's NodeDescriptor (uri, id, kind \"asset\", title, path, bytes); the asset is an HTML file you can read from disk at path. " +
 			"On failure returns 'cannot retrieve: {reason}' so you can fall back to other tools.",
@@ -167,7 +185,7 @@ func NewServer(documents *services.DocumentService, nodes NodeResolver, search S
 func (s *Server) OpenAnswers(vocabulary AnswerVocabulary, writers map[domain.AnswerHolder]AnswerWriter) {
 	s.vocabulary, s.answers = vocabulary, writers
 	mcpsdk.AddTool(s.sdk, &mcpsdk.Tool{
-		Name: "add_to_answer",
+		Name: s.writeVerb("add_to_answer"),
 		Description: "Write the next block of your answer. The answer is a document the reader keeps: each call appends one finished block of it, " +
 			"in order, exactly as you write it — never commentary on your work, a progress note, or a remark about the task. " +
 			"Once you have called this tool, your final message is not shown to anyone: the blocks you added are the whole answer. " +
@@ -175,9 +193,40 @@ func (s *Server) OpenAnswers(vocabulary AnswerVocabulary, writers map[domain.Ans
 			"attrs is the block's map. A content type this answer does not take is refused with the reason and the ones it does.",
 	}, s.addToAnswer)
 	mcpsdk.AddTool(s.sdk, &mcpsdk.Tool{
-		Name:        "describe_answer",
+		Name:        s.writeVerb("describe_answer"),
 		Description: "List the content types this answer is written in with add_to_answer: for each, when to use it, the attrs its map takes, a minimal example map, and which of its blocks wait on work after they land.",
 	}, s.describeAnswer)
+}
+
+// readVerb records name as one of the server's read verbs, which any run may
+// call, and returns it.
+func (s *Server) readVerb(name string) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.readVerbs = append(s.readVerbs, name)
+	return name
+}
+
+// writeVerb records name as one of the server's write verbs, which only a run
+// that may write may call, and returns it. A write verb refuses any other run
+// itself (runGrant.refuseWrite).
+func (s *Server) writeVerb(name string) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.writeVerbs = append(s.writeVerbs, name)
+	return name
+}
+
+// Verbs returns the names of the verbs a run may call: the read verbs, and the
+// write verbs when writes is true.
+func (s *Server) Verbs(writes bool) []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := append([]string(nil), s.readVerbs...)
+	if writes {
+		out = append(out, s.writeVerbs...)
+	}
+	return out
 }
 
 // SetBaseURL records the origin the CLI subprocess reaches the app on (the
@@ -190,20 +239,22 @@ func (s *Server) SetBaseURL(base string) {
 }
 
 // EndpointFor issues a per-run bearer token bound to ex, registers it, and
-// returns the /mcp URL + token to inject into the containment profile, so
-// side-effecting verbs write only into ex's container (fetch_page) and ex's
-// answer (add_to_answer); an empty ex grants neither. An empty URL (no listener
-// yet) means no server is reachable, so the profile renders without MCP flags.
-// The token is valid until EndRun ends its run. Implements ai.MCPEndpoint.
-func (s *Server) EndpointFor(ex domain.Exchange) (url, token string) {
+// returns the /mcp URL + token to inject into the containment profile and the
+// verbs the run may call (Verbs), so fetch_page keeps a page only in ex's
+// container and add_to_answer writes only ex's answer; an empty ex grants
+// neither. When writes is false the token refuses the write verbs whatever ex
+// is. An empty URL (no listener yet) means no server is reachable, so the
+// profile renders without MCP flags. The token is valid until EndRun ends its
+// run. Implements ai.MCPEndpoint.
+func (s *Server) EndpointFor(ex domain.Exchange, writes bool) (url, token string, verbs []string) {
 	s.mu.RLock()
 	base := s.baseURL
 	s.mu.RUnlock()
 	if base == "" {
-		return "", ""
+		return "", "", nil
 	}
-	tok := s.issueToken(ex)
-	return base + "/mcp", tok
+	tok := s.issueToken(ex, writes)
+	return base + "/mcp", tok, s.Verbs(writes)
 }
 
 // EndRun revokes token, so a request bearing it is refused as unauthorised and
@@ -224,7 +275,7 @@ func (s *Server) EndRun(token string) (written int) {
 	return g.written
 }
 
-func (s *Server) issueToken(ex domain.Exchange) string {
+func (s *Server) issueToken(ex domain.Exchange, writes bool) string {
 	buf := make([]byte, 32)
 	if _, err := rand.Read(buf); err != nil {
 		logger.Error("sieve mcp: token generation failed", "err", err)
@@ -233,7 +284,7 @@ func (s *Server) issueToken(ex domain.Exchange) string {
 	tok := hex.EncodeToString(buf)
 	ex.Container, ex.Block = strings.TrimSpace(ex.Container), strings.TrimSpace(ex.Block)
 	s.mu.Lock()
-	s.tokens[tok] = &runGrant{exchange: ex}
+	s.tokens[tok] = &runGrant{exchange: ex, writes: writes}
 	s.mu.Unlock()
 	return tok
 }

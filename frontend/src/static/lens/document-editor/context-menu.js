@@ -1054,7 +1054,7 @@ import { selectNextScope } from './interaction-policy.js'
     }})
 
     if (!isVirtual) {
-      items.push({ icon: IC.refresh, label: 'Reset to Default', cls: 'ctx-item--danger', action: function () {
+      items.push({ icon: IC.refresh, label: 'Remove Addendum', cls: 'ctx-item--danger', action: function () {
         hx('POST', '/api/sidebar/revert-prompt?id=' + encodeURIComponent(id), { swap: 'none' })
       }})
     }

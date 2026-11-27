@@ -56,7 +56,7 @@ func runFamilyCommand(t *testing.T, c command.Command, text string, ctx command.
 	if err != nil {
 		t.Fatalf("Work: %v", err)
 	}
-	return job.Pending.Attrs, blk.Attrs, cap.prompt
+	return job.Pending.Attrs, blk.Attrs, cap.run.Prompt.String()
 }
 
 // familyManifestEntries pulls the JSON array out of the section a command
@@ -210,22 +210,14 @@ func TestAIFamily_NoAttachmentsIsUnchanged(t *testing.T) {
 	}
 }
 
-// Byte-for-byte, against the template itself: /btw without attachments renders
-// exactly the prompt it always did.
-func TestBtw_NoAttachments_PromptIsByteIdenticalToTheTemplate(t *testing.T) {
+// /btw without attachments sends the btw brief and the bare question as its
+// data, and nothing else.
+func TestBtw_NoAttachments_PromptIsTheBriefAndTheQuestion(t *testing.T) {
 	cap := &captureRunner{ret: "answer"}
 	svc := newSmartTestService(t, cap)
 
-	if _, _, prompt := runFamilyCommand(t, NewBtwCommand(svc, nil), "what is SRP", command.NewContext(nil, nil, nil), cap); prompt !=
-		strings.NewReplacer(
-			"{question}", "what is SRP",
-			"{selection}", "",
-			"{doc_title}", "",
-			"{doc_summary}", "",
-			"{doc_uuid}", "",
-		).Replace(DefaultBtwPrompt) {
-		t.Fatalf("the attachment-less /btw prompt changed:\n%s", prompt)
-	}
+	runFamilyCommand(t, NewBtwCommand(svc, nil), "what is SRP", command.NewContext(nil, nil, nil), cap)
+	cap.assertRan(t, svc.prompts, "btw", BtwData{Question: "what is SRP"})
 }
 
 // Every AI-family command answers into its OWN block: the run's MCP token is

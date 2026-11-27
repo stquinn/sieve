@@ -100,8 +100,8 @@ func TestAIService_DescribeImage_resolvesTheSrcThroughTheResolver(t *testing.T) 
 				if err == nil {
 					t.Fatalf("DescribeImage succeeded (%+v), want an error", desc)
 				}
-				if cap.op != "" {
-					t.Errorf("the CLI ran (%q) for an image that was not found", cap.op)
+				if cap.run.Task.Name != "" {
+					t.Errorf("the CLI ran (%q) for an image that was not found", cap.run.Task.Name)
 				}
 				return
 			}
@@ -111,27 +111,34 @@ func TestAIService_DescribeImage_resolvesTheSrcThroughTheResolver(t *testing.T) 
 			if desc.Alt != "Alt" || desc.Summary != "Summary" {
 				t.Errorf("desc = %+v", desc)
 			}
-			if want := filepath.Dir(filepath.Join(svc.storePath, tc.node.Path)); cap.cwd != want {
-				t.Errorf("cwd = %q, want the resolved file's directory %q", cap.cwd, want)
+			if want := filepath.Dir(filepath.Join(svc.storePath, tc.node.Path)); cap.run.Cwd != want {
+				t.Errorf("cwd = %q, want the resolved file's directory %q", cap.run.Cwd, want)
 			}
 		})
 	}
 }
 
-// fakeDocMCPEndpoint issues "tok-doc-{container}" for a scoped run and records
-// the last exchange it was asked for and the runs ended; written is how many
-// answer elements EndRun reports for the last token issued.
+// fakeDocMCPEndpoint issues "tok-doc-{container}" for a scoped run, allowing
+// search and, to a run that may write, add_to_answer; it records
+// the last exchange it was asked for, whether that run may write, and the runs
+// ended.
+// written is how many answer elements EndRun reports for the last token issued.
 type fakeDocMCPEndpoint struct {
-	url     string
-	lastDoc string
-	lastEx  domain.Exchange
-	written int
-	ended   []string
+	url        string
+	lastDoc    string
+	lastEx     domain.Exchange
+	lastWrites bool
+	written    int
+	ended      []string
 }
 
-func (f *fakeDocMCPEndpoint) EndpointFor(ex domain.Exchange) (string, string) {
-	f.lastDoc, f.lastEx = ex.Container, ex
-	return f.url, "tok-doc-" + ex.Container
+func (f *fakeDocMCPEndpoint) EndpointFor(ex domain.Exchange, writes bool) (string, string, []string) {
+	f.lastDoc, f.lastEx, f.lastWrites = ex.Container, ex, writes
+	verbs := []string{"search"}
+	if writes {
+		verbs = append(verbs, "add_to_answer")
+	}
+	return f.url, "tok-doc-" + ex.Container, verbs
 }
 
 func (f *fakeDocMCPEndpoint) EndRun(token string) int {
@@ -195,7 +202,7 @@ func TestAIService_AnsweringRuns_BindTheExchangeAndReportAWrittenAnswer(t *testi
 			if mcpEp.lastEx != tc.ex {
 				t.Errorf("token bound to %+v, want %+v", mcpEp.lastEx, tc.ex)
 			}
-			args := buildBaseArgs(cap.dialect, cap.model, cap.prompt, cap.profile, cap.cwd, cap.libraryDir)
+			args := cap.run.args()
 			if cfg := flagValue(args, "--mcp-config"); !strings.Contains(cfg, "Bearer tok-doc-"+ex.Container) {
 				t.Errorf("--mcp-config missing the exchange's bearer token: %s", cfg)
 			}
@@ -204,7 +211,10 @@ func TestAIService_AnsweringRuns_BindTheExchangeAndReportAWrittenAnswer(t *testi
 }
 
 // Every CLI run is issued a token of its own, bound to what it works on, and
-// ends it once the CLI has exited, whether or not the run answers anything.
+// ends it once the CLI has exited, whether or not the run answers anything. It
+// sends its task's own brief, never a stored override. The run is allowed the
+// Sieve verbs the endpoint names for its task's output, each by name: the
+// answer verbs to a CONTENT task alone.
 func TestAIService_EveryRunEndsItsToken(t *testing.T) {
 	const doc = "0197b1f4-5a5a-7000-8000-00000000f001"
 	page := domain.NewLeafAddress(doc, "page-1.png")
@@ -244,15 +254,34 @@ func TestAIService_EveryRunEndsItsToken(t *testing.T) {
 			svc.documents = ds
 			mcpEp := &fakeDocMCPEndpoint{url: "http://127.0.0.1:41234/mcp"}
 			svc.SetMCPEndpoint(mcpEp)
+			if err := svc.prompts.SaveAddendum(tc.op, "an addendum"); err != nil {
+				t.Fatal(err)
+			}
 
 			if err := tc.run(svc); err != nil {
 				t.Fatalf("%s: %v", tc.op, err)
 			}
-			if cap.op != tc.op || mcpEp.lastEx != tc.bound {
-				t.Errorf("ran %q bound to %+v, want %q bound to %+v", cap.op, mcpEp.lastEx, tc.op, tc.bound)
+			if task, _ := svc.prompts.Task(tc.op); cap.run.Prompt.Brief != task.Brief {
+				t.Errorf("%s sent the brief %q, want its task's", tc.op, cap.run.Prompt.Brief.Text)
+			}
+			if got := cap.run.Prompt.Addendum.Text; got != "an addendum" {
+				t.Errorf("%s sent the addendum %q, want the one stored", tc.op, got)
+			}
+			if cap.run.Task.Name != tc.op || mcpEp.lastEx != tc.bound {
+				t.Errorf("ran %q bound to %+v, want %q bound to %+v", cap.run.Task.Name, mcpEp.lastEx, tc.op, tc.bound)
 			}
 			if want := []string{"tok-doc-" + tc.bound.Container}; fmt.Sprint(mcpEp.ended) != fmt.Sprint(want) {
 				t.Errorf("runs ended = %q, want the run's own token, once", mcpEp.ended)
+			}
+			if mcpEp.lastWrites != cap.run.Task.Writes() {
+				t.Errorf("the endpoint was told the run writes: %v, want %v", mcpEp.lastWrites, cap.run.Task.Writes())
+			}
+			want := "mcp__sieve__search"
+			if cap.run.Task.Writes() {
+				want += ",mcp__sieve__add_to_answer"
+			}
+			if allow := flagValue(cap.run.args(), "--allowedTools"); !strings.HasSuffix(allow, ","+want) || strings.Contains(allow, "mcp__sieve__*") {
+				t.Errorf("--allowedTools = %s, want it to end with %s and no wildcard", allow, want)
 			}
 		})
 	}
@@ -297,17 +326,17 @@ func TestAIService_RunWebClip_PromptAssemblyAndDocScopedProfile(t *testing.T) {
 			if mcpEp.lastDoc != uuid {
 				t.Errorf("EndpointFor called with %q, want %q", mcpEp.lastDoc, uuid)
 			}
-			template, _ := svc.prompts.GetPromptContent("web-clip-" + mode)
-			want := strings.ReplaceAll(strings.ReplaceAll(template, "{source}", sourceURL), "{document}", "# My Trip Notes")
-			if cap.prompt != want {
-				t.Errorf("mode %s prompt = %q, want the filled template %q", mode, cap.prompt, want)
+			if mode == "fetch" {
+				cap.assertRan(t, svc.prompts, "web-clip-fetch", WebClipFetchData{Source: sourceURL})
+			} else {
+				cap.assertRan(t, svc.prompts, "web-clip-summarise", WebClipSummariseData{Source: sourceURL, Document: "# My Trip Notes"})
 			}
-			args := buildBaseArgs(cap.dialect, cap.model, cap.prompt, cap.profile, cap.cwd, cap.libraryDir)
+			args := cap.run.args()
 			if cfg := flagValue(args, "--mcp-config"); !strings.Contains(cfg, "Bearer tok-doc-"+uuid) {
 				t.Errorf("--mcp-config missing document-scoped bearer token: %s", cfg)
 			}
-			if allow := flagValue(args, "--allowedTools"); !strings.Contains(allow, "mcp__sieve__*") {
-				t.Errorf("--allowedTools missing mcp__sieve__*: %s", allow)
+			if allow := flagValue(args, "--allowedTools"); !strings.HasSuffix(allow, ",mcp__sieve__search") {
+				t.Errorf("--allowedTools = %s, want the web clip's one Sieve verb last", allow)
 			}
 		})
 	}
@@ -375,8 +404,8 @@ func TestAIService_DescribeNote_ShowsThePagesAndReadsTheAnswer(t *testing.T) {
 
 			got, err := svc.DescribeNote(note, tc.pages)
 			if tc.wantErr {
-				if err == nil || cap.op != "" {
-					t.Fatalf("DescribeNote = %+v, %v; the CLI ran %q", got, err, cap.op)
+				if err == nil || cap.run.Task.Name != "" {
+					t.Fatalf("DescribeNote = %+v, %v; the CLI ran %q", got, err, cap.run.Task.Name)
 				}
 				return
 			}
@@ -388,14 +417,10 @@ func TestAIService_DescribeNote_ShowsThePagesAndReadsTheAnswer(t *testing.T) {
 			if fmt.Sprint(got) != fmt.Sprint(want) {
 				t.Errorf("DescribeNote = %+v", got)
 			}
-			if cap.op != "note-meta" || cap.cwd != filepath.Join(svc.storePath, "blocks", note) || mcpEp.lastDoc != note {
-				t.Errorf("op %q, cwd %q, profile for %q", cap.op, cap.cwd, mcpEp.lastDoc)
+			if cap.run.Task.Name != "note-meta" || cap.run.Cwd != filepath.Join(svc.storePath, "blocks", note) || mcpEp.lastDoc != note {
+				t.Errorf("op %q, cwd %q, profile for %q", cap.run.Task.Name, cap.run.Cwd, mcpEp.lastDoc)
 			}
-			template, _ := svc.prompts.GetPromptContent("note-meta")
-			wantPrompt := strings.NewReplacer("{page_files}", "1. page-b-2.png\n2. page-a-1.png", "{category_list}", "Home, Work").Replace(template)
-			if cap.prompt != wantPrompt {
-				t.Errorf("prompt = %q, want %q", cap.prompt, wantPrompt)
-			}
+			cap.assertRan(t, svc.prompts, "note-meta", NoteMetaData{Pages: []string{"page-b-2.png", "page-a-1.png"}, Categories: []string{"Home", "Work"}})
 		})
 	}
 }
@@ -444,8 +469,8 @@ func TestAIService_TranscribePage_ShowsThePageAndParsesItsParts(t *testing.T) {
 
 			got, err := svc.TranscribePage(note, tc.page)
 			if tc.wantErr {
-				if err == nil || cap.op != "" {
-					t.Fatalf("TranscribePage = %+v, %v; the CLI ran %q", got, err, cap.op)
+				if err == nil || cap.run.Task.Name != "" {
+					t.Fatalf("TranscribePage = %+v, %v; the CLI ran %q", got, err, cap.run.Task.Name)
 				}
 				return
 			}
@@ -455,13 +480,10 @@ func TestAIService_TranscribePage_ShowsThePageAndParsesItsParts(t *testing.T) {
 			if fmt.Sprint(got) != fmt.Sprint(want) {
 				t.Errorf("TranscribePage = %+v", got)
 			}
-			if cap.op != "page-transcript" || cap.cwd != filepath.Join(svc.storePath, "blocks", note) || mcpEp.lastDoc != note {
-				t.Errorf("op %q, cwd %q, profile for %q", cap.op, cap.cwd, mcpEp.lastDoc)
+			if cap.run.Task.Name != "page-transcript" || cap.run.Cwd != filepath.Join(svc.storePath, "blocks", note) || mcpEp.lastDoc != note {
+				t.Errorf("op %q, cwd %q, profile for %q", cap.run.Task.Name, cap.run.Cwd, mcpEp.lastDoc)
 			}
-			template, _ := svc.prompts.GetPromptContent("page-transcript")
-			if wantPrompt := strings.ReplaceAll(template, "{page_file}", "page-p1-k1.png"); cap.prompt != wantPrompt {
-				t.Errorf("prompt = %q, want %q", cap.prompt, wantPrompt)
-			}
+			cap.assertRan(t, svc.prompts, "page-transcript", PageTranscriptData{File: "page-p1-k1.png"})
 		})
 	}
 }

@@ -230,8 +230,8 @@ func answer(t *testing.T, method, url, contentType, body string) (int, string, s
 func TestOpenAPI_DocumentLoadAnswersWhatItPublishes(t *testing.T) {
 	contract := loadOpenAPIContract(t)
 	srv, sp, _, _ := newDocumentEndpointServer(t)
-	if err := sp.Prompts.SavePrompt("ask", "answer the question"); err != nil {
-		t.Fatalf("SavePrompt: %v", err)
+	if err := sp.Prompts.SaveAddendum("ask", "answer the question"); err != nil {
+		t.Fatalf("SaveAddendum: %v", err)
 	}
 
 	status, media, body := answer(t, http.MethodGet, srv.URL+"/api/document/load?uuid=prompt:ask", "", "")

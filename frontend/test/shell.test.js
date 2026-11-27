@@ -1329,9 +1329,8 @@ describe('flushSave routing — in-flight text down, then persist', () => {
     expect(provider.setContents).toHaveBeenCalledWith('prompt body')
   })
 
-  it('an UNTOUCHED prompt does not write — reading one must not mint an override', async () => {
-    // GetPromptContent prefers a store override over the baked-in default, so a
-    // save on open would shadow the default forever for a prompt merely READ.
+  it('an UNTOUCHED prompt does not write — reading one must not write', async () => {
+    // A save on open would be a write for a prompt merely READ.
     const provider = wholeContentProvider()
     const ed = new (withFakeSurfaces(PromptEditor))('prompt:p', { provider })
     const surface = ed.presentSurface('markdown', document.createElement('div'), 'seed')

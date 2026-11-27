@@ -17,7 +17,7 @@ type documentContent struct {
 }
 
 // read returns the content for uuid, or false when nothing is stored under it.
-// A prompt id (prompt:{name}) resolves to its raw text in markdown mode; a note
+// A prompt id (prompt:{name}) resolves to the task's addendum, raw, in markdown mode; a note
 // resolves THROUGH the shadow, which mints prose handles, so the editor and the
 // shadow share block identity from the first render; a block container or any
 // other node the editor opens resolves to its one block, through the same open
@@ -26,7 +26,7 @@ func (c documentContent) read(uuid string) (protocol.DocumentContent, bool) {
 	tab := c.tab(uuid)
 
 	if name, isPrompt := strings.CutPrefix(uuid, "prompt:"); isPrompt {
-		body, err := c.sp.Prompts.GetPromptContent(name)
+		body, err := c.sp.Prompts.Addendum(name)
 		if err != nil {
 			return protocol.DocumentContent{}, false
 		}
