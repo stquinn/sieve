@@ -9,7 +9,7 @@ import (
 // Stopgap for the AI-prompt ref-chain regression + first brick of the ShadowDoc
 // refactor: a prose block is resolvable by id from the authoritative block tree
 // (everything is a block — no structured-vs-prose discrimination at lookup time;
-// kind only matters when turning the block into context text). GetBlock(id) on the lock-free DocView snapshot is
+// kind only matters when turning the block into context text). Block(id) on the lock-free DocView snapshot is
 // the single accessor; BuildContextForID returns a prose block's markdown content.
 
 func TestShadowDocument_getBlock_resolvesProse(t *testing.T) {
@@ -17,15 +17,15 @@ func TestShadowDocument_getBlock_resolvesProse(t *testing.T) {
 		{ID: "pr-1", Kind: block.KindProse, Attrs: map[string]interface{}{"content": "the quick brown fox"}},
 		{ID: "co-1", Kind: "code", Attrs: map[string]interface{}{"id": "co-1", "source": "x=1"}},
 	}}
-	b, ok := doc.GetBlock("pr-1")
-	if !ok || b == nil {
-		t.Fatalf("GetBlock(pr-1): want found, got ok=%v", ok)
+	b, ok := doc.Block("pr-1")
+	if !ok {
+		t.Fatalf("Block(pr-1): want found, got ok=%v", ok)
 	}
 	if b.Kind != block.KindProse || b.Content() != "the quick brown fox" {
-		t.Fatalf("GetBlock(pr-1): got %+v", b)
+		t.Fatalf("Block(pr-1): got %+v", b)
 	}
-	if _, ok := doc.GetBlock("nope"); ok {
-		t.Fatalf("GetBlock(nope): want not found")
+	if _, ok := doc.Block("nope"); ok {
+		t.Fatalf("Block(nope): want not found")
 	}
 }
 

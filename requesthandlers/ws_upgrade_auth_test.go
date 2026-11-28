@@ -113,7 +113,7 @@ func TestWS_UpgradeWithTheTokenEchoesOnlyTheVersionWord(t *testing.T) {
 func TestWS_AnMCPTokenCannotOpenAWire(t *testing.T) {
 	srv, sp, _, uuid := newWsTestServer(t)
 
-	mcpServer := mcp.NewServer(sp.Documents, nil, nil, sp.LinkPreview)
+	mcpServer := mcp.NewServer(sp.Documents, sp.Assets, nil, nil, sp.LinkPreview)
 	mcpServer.SetBaseURL(srv.URL)
 	_, mcpToken, _ := mcpServer.EndpointFor(domain.Exchange{}, false)
 	if mcpToken == "" {

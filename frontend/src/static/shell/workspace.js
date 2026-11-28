@@ -14,11 +14,13 @@ import { ProviderAdapter } from '../container/provider-adapter.js'
 import { WholeContentAdapter } from '../container/whole-content-adapter.js'
 import { BlockProviderAdapter } from '../container/block-provider-adapter.js'
 import { InkProviderAdapter } from '../container/ink-provider-adapter.js'
+import { ChatProviderAdapter } from '../container/chat-provider-adapter.js'
 import { NoteEditor } from '../lens/document-editor/note-editor.js'
 import { PromptEditor } from '../lens/prompt/prompt-editor.js'
 import { BlockLens } from '../lens/block/block-lens.js'
 import { DigitalNoteLens } from '../lens/ink/digital-note-lens.js'
 import { LiveInkLens } from '../lens/ink/live-ink-lens.js'
+import { ChatLens } from '../lens/chat/chat-lens.js'
 import { SurfaceIntent } from '../lens/abstract-surface.js'
 import { SpellControl } from './spell-control.js'
 import { WorkspaceService } from './workspace-service.js'
@@ -50,6 +52,7 @@ export class SieveWorkspace {
     prompt: Object.freeze({ lens: PromptEditor, provider: WholeContentAdapter, channel: false, document: false }),
     'digital-note': Object.freeze({ lens: DigitalNoteLens, provider: InkProviderAdapter, channel: true, document: false }),
     'ink-live': Object.freeze({ lens: LiveInkLens, provider: InkProviderAdapter, channel: true, document: false }),
+    chat: Object.freeze({ lens: ChatLens, provider: ChatProviderAdapter, channel: true, document: false, pinsAskPanel: true }),
   }), Object.freeze({ lens: BlockLens, provider: ProviderAdapter, channel: true, document: false }))
 
   /** @type {Map<string, SieveTab>} uuid → Tab */
@@ -87,9 +90,10 @@ export class SieveWorkspace {
    *  rendered opens the tab it marks active unless something else is mounted by then */
   #reopenAfterDeletion = false
 
-  /** @type {{uuid: string, leaf: string}|null} the leaf `openAddress` asked revealed in the
-   *  container it opened, for the next activation to hand that container's lens; any
-   *  activation takes it, so one of another container discards it */
+  /** @type {{uuid: string, leaf: string, seek: string|undefined}|null} the leaf `openAddress`
+   *  asked revealed in the container it opened, and the text sought there, for the next
+   *  activation to hand that container's lens; any activation takes it, so one of another
+   *  container discards it */
   #pendingReveal = null
 
   /** @type {string|null|undefined} the insert anchor `beginFileAttach` captured
@@ -202,18 +206,21 @@ export class SieveWorkspace {
     return tab
   }
 
-  /** Closes the Tab for a uuid. If it was active, activeTab becomes null.
+  /** Closes the Tab for a uuid. If it was active, activeTab becomes null. The
+   *  Ask panel's draft written for the container goes with it.
    *  @param {string} uuid */
   closeTab(uuid) {
     const tab = this.#tabs.get(uuid)
-    if (!tab) return
-    this.#tabs.delete(uuid)
-    if (this.#activeTab === tab) {
-      this.#activeTab = null
-      this.#switchSelectionSource(null)
-      this.#notifyActiveTabListeners()
-      this.#toolbar.show(null)
+    if (tab) {
+      this.#tabs.delete(uuid)
+      if (this.#activeTab === tab) {
+        this.#activeTab = null
+        this.#switchSelectionSource(null)
+        this.#notifyActiveTabListeners()
+        this.#toolbar.show(null)
+      }
     }
+    this.#askPanel?.dropDraft(uuid)
   }
 
   /** @returns {SieveTab|null} */
@@ -242,17 +249,19 @@ export class SieveWorkspace {
    * and has the container's lens reveal the leaf the address names, if it names
    * one. `uri` is OPAQUE to every line of this file: Go owns the address grammar,
    * so this asks rather than parses, and the leaf is handed on as Go named it.
-   * The leaf reaches the lens at the activation the open causes, which follows
-   * `open` resolving.
-   * @param {string} uri @returns {Promise<boolean>} whether a document was opened
+   * `seek`, the text the opener is looking for there, is OPAQUE too: it is
+   * handed on with the leaf, unread. The leaf reaches the lens at the activation
+   * the open causes, which follows `open` resolving.
+   * @param {string} uri @param {string} [seek]
+   * @returns {Promise<boolean>} whether a document was opened
    */
-  async openAddress(uri) {
+  async openAddress(uri, seek) {
     const target = await this.#mentionService.resolve(uri)
     if (!target || !target.found || !target.uuid) {
       if (uri) console.warn('[workspace] address opens nothing:', uri, target && target.error)
       return false
     }
-    this.#pendingReveal = target.blockId ? { uuid: target.uuid, leaf: target.blockId } : null
+    this.#pendingReveal = target.blockId ? { uuid: target.uuid, leaf: target.blockId, seek: seek } : null
     await this.open(target.uuid)
     return true
   }
@@ -260,6 +269,11 @@ export class SieveWorkspace {
   /** @returns {Promise<any>} */
   newNote() {
     return this.#ajax('POST', '/api/note')
+  }
+
+  /** Makes a chat and opens it in a tab. @returns {Promise<any>} */
+  newChat() {
+    return this.#ajax('POST', '/api/chat')
   }
 
   /** @param {string} uuid @returns {Promise<any>} */
@@ -389,8 +403,9 @@ export class SieveWorkspace {
    * - TEARDOWN (uuid ''): the active editor is destroyed and its tab closed.
    * - Same-uuid re-activation: the editor and its live socket are KEPT.
    *
-   * The leaf an `openAddress` of this uuid asked revealed is handed to the tab's
-   * lens here, new or kept, before it is presented again.
+   * The leaf an `openAddress` of this uuid asked revealed, and the text it
+   * sought there, are handed to the tab's lens here, new or kept, before it is
+   * presented again.
    *
    * @param {string} uuid — target container uuid, or '' to tear down
    * @param {object} [options] — passed to the lens constructor; the provider and
@@ -441,7 +456,7 @@ export class SieveWorkspace {
         viewState: tab.viewState,
       }, options)))
     }
-    if (reveal && reveal.uuid === uuid && tab.editor) tab.editor.reveal(reveal.leaf)
+    if (reveal && reveal.uuid === uuid && tab.editor) tab.editor.reveal(reveal.leaf, reveal.seek)
     this.#toolbar.show(tab.editor)
     return tab
   }
@@ -454,16 +469,24 @@ export class SieveWorkspace {
   }
 
   /** The active editor when it can edit blocks — the one a block verb (a caret
-   *  anchor, an Ask, a placement) is addressed to — or null.
+   *  anchor, an Explain, a placement) is addressed to — or null.
    *  @returns {import('../lens/document-editor/note-editor.js').NoteEditor|null} */
   activeBlockEditor() {
     const ed = this.activeEditor
     return ed && ed.getCapabilities().blocks ? /** @type {any} */ (ed) : null
   }
 
-  /** Every lens this host has mounted right now — the active tab's, and the
-   *  panel's draft. A host with two instruments on the page has two, and a
-   *  gesture belongs to exactly one of them.
+  /** The active editor when it can be asked (the `ask` capability) — the one the
+   *  Ask panel's question is put to — or null.
+   *  @returns {(import('../lens/abstract-editor.js').AbstractEditor & {askAi: (job: object) => Promise<void>})|null} */
+  activeAskableLens() {
+    const ed = this.activeEditor
+    return ed && ed.getCapabilities().ask ? /** @type {any} */ (ed) : null
+  }
+
+  /** Every lens this host has mounted right now — the active tab's and the
+   *  panel's draft. A host with several instruments on the page has several,
+   *  and a gesture belongs to exactly one of them.
    *  @returns {Array<any>} */
   #mountedLenses() {
     return [this.activeEditor, this.#askPanel?.composer?.editor || null]
@@ -548,7 +571,7 @@ export class SieveWorkspace {
             if (this.#currentUuid !== uuid) return
             this.#activeTab?.recordPresenting(ed.presenting)
             this.#mirrorPresenting()
-            // 0 for a never-seen tab is the park-at-top floor, so one call serves both.
+            // 0 for a never-seen tab is where its surface opens a container, so one call serves both.
             ed.restoreScroll(data.scroll || 0)
           })
         })
@@ -610,12 +633,24 @@ export class SieveWorkspace {
 
   /** The non-toolbar chrome reactions to the editor's view events: the body
    *  `markdown-mode` class plus the tab-strip re-render, the failure alert, the
-   *  body `presenting` class, a lens asking for a container to be opened, and a
-   *  lens asking for its own menu, which the app's one context menu shows.
-   *  @param {{type: string, mode?: string, error?: unknown, uuid?: string, x?: number, y?: number, items?: ReadonlyArray<any>}} event */
+   *  body `presenting` class, a lens asking for something to be opened, a lens
+   *  asking for its own menu, which the app's one context menu shows, and a lens
+   *  saying the reader quoted, which the Ask panel puts into its draft.
+   *
+   *  `open-container` names what to open by EITHER `uri`, an address the lens
+   *  was handed, which `openAddress` resolves, OR `uuid`, a container the lens
+   *  was handed, which `open` opens; an address is taken when both are given.
+   *  The `seek` beside an address goes to `openAddress` with it, unread.
+   *  `quote` hands the panel what it carries, `blockId` and `text`, with the
+   *  uuid of the container the active tab holds.
+   *  @param {{type: string, mode?: string, error?: unknown, uuid?: string, uri?: string, seek?: string, blockId?: string, text?: string, x?: number, y?: number, items?: ReadonlyArray<any>}} event */
   onEditorModeEvent(event) {
     if (event.type === SurfaceIntent.OPEN_CONTAINER) {
-      if (event.uuid) this.open(event.uuid)
+      if (event.uri) this.openAddress(event.uri, event.seek)
+      else if (event.uuid) this.open(event.uuid)
+    } else if (event.type === SurfaceIntent.QUOTE) {
+      const tab = this.#activeTab
+      if (tab) this.#askPanel?.insertQuote(tab.uuid, event.blockId || '', event.text || '')
     } else if (event.type === SurfaceIntent.CONTEXT_MENU) {
       document.dispatchEvent(new CustomEvent('sieve:contextmenu', {
         detail: { x: event.x || 0, y: event.y || 0, context: { type: 'sieveBlock', items: [...(event.items || [])] } },
@@ -882,6 +917,7 @@ export class SieveWorkspace {
 
   #notifyActiveTabListeners() {
     const tab = this.#activeTab
+    this.#askPanel?.pinFor(tab && SieveWorkspace.#LENSES.lookup(tab.kind).pinsAskPanel ? tab.uuid : null)
     for (const fn of this.#activeTabListeners) {
       try { fn(tab) } catch (e) { console.error('[SieveWorkspace] activeTabChanged listener threw', e) }
     }

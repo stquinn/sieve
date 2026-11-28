@@ -10,74 +10,11 @@ import (
 	"testing"
 	"time"
 
+	"sieve/sieve/clocktest"
 	"sieve/sieve/domain"
 	"sieve/sieve/ink/link"
 	"sieve/sieve/services"
 )
-
-// fakeClock is the namer's clock, moved by the test: a timer fires when advance passes its time. It
-// starts an hour ahead of the wall clock, so every save the store stamps during a test reads as
-// long past.
-type fakeClock struct {
-	mu     sync.Mutex
-	now    time.Time
-	timers []*fakeTimer
-}
-
-type fakeTimer struct {
-	at      time.Time
-	f       func()
-	stopped bool
-}
-
-func newFakeClock() *fakeClock {
-	return &fakeClock{now: time.Now().Add(time.Hour).Truncate(time.Second)}
-}
-
-func (c *fakeClock) Now() time.Time {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.now
-}
-
-func (c *fakeClock) AfterFunc(d time.Duration, f func()) func() bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	timer := &fakeTimer{at: c.now.Add(d), f: f}
-	c.timers = append(c.timers, timer)
-	return func() bool {
-		c.mu.Lock()
-		defer c.mu.Unlock()
-		was := !timer.stopped
-		timer.stopped = true
-		return was
-	}
-}
-
-// advance moves the clock on by d and fires, in time order, every timer due by then, those the
-// fired ones set included.
-func (c *fakeClock) advance(d time.Duration) {
-	c.mu.Lock()
-	c.now = c.now.Add(d)
-	c.mu.Unlock()
-	for {
-		c.mu.Lock()
-		var due *fakeTimer
-		for _, timer := range c.timers {
-			if !timer.stopped && !timer.at.After(c.now) && (due == nil || timer.at.Before(due.at)) {
-				due = timer
-			}
-		}
-		if due != nil {
-			due.stopped = true
-		}
-		c.mu.Unlock()
-		if due == nil {
-			return
-		}
-		due.f()
-	}
-}
 
 // fakeDescriber answers every description with answer, or err, at tier, and keeps the pages it
 // was shown. While hold is set each description waits for it to close.
@@ -129,7 +66,7 @@ var kitchen = domain.NoteMetadata{Title: "Kitchen extension planning", Keywords:
 type namerRig struct {
 	*imagesRig
 	state     *services.StateService
-	clock     *fakeClock
+	clock     *clocktest.Clock
 	describer *fakeDescriber
 	tracker   *services.JobTracker
 	engine    *services.JobEngine
@@ -140,7 +77,7 @@ const testSettle = 10 * time.Second
 
 func newNamerRig(t *testing.T, records ...link.Record) *namerRig {
 	t.Helper()
-	rig := &namerRig{imagesRig: newImagesRig(t, records...), clock: newFakeClock(),
+	rig := &namerRig{imagesRig: newImagesRig(t, records...), clock: clocktest.New(),
 		describer: &fakeDescriber{tier: domain.TierSmart, answer: kitchen}, tracker: services.NewJobTracker()}
 	state, err := services.NewStateService(rig.st, "", nil)
 	if err != nil {
@@ -197,7 +134,7 @@ func (rig *namerRig) commit(records ...link.Record) {
 // settled advances the clock by d and waits until no naming job is queued or running.
 func (rig *namerRig) settled(d time.Duration) {
 	rig.t.Helper()
-	rig.clock.advance(d)
+	rig.clock.Advance(d)
 	waitFor(rig.t, func() bool {
 		rig.namer.mu.Lock()
 		defer rig.namer.mu.Unlock()
@@ -356,7 +293,7 @@ func TestNoteNamer_NameNowNamesANoteAtOnce(t *testing.T) {
 	if err := rig.namer.NameNow(context.Background(), rig.uuid()); err != nil {
 		t.Fatal(err)
 	}
-	rig.clock.advance(testSettle)
+	rig.clock.Advance(testSettle)
 	for deadline := time.Now().Add(100 * time.Millisecond); time.Now().Before(deadline); time.Sleep(time.Millisecond) {
 		if calls := rig.describer.calls(); len(calls) != 3 {
 			t.Fatalf("asked again while its job ran: %d descriptions, want 3", len(calls))
@@ -477,10 +414,10 @@ func TestNoteNamer_ARecordDuringTheJobLeavesTheNoteDue(t *testing.T) {
 	hold := make(chan struct{})
 	rig.describer.set(func(d *fakeDescriber) { d.hold = hold })
 	rig.settled(0)
-	rig.clock.advance(testSettle)
+	rig.clock.Advance(testSettle)
 	waitFor(t, func() bool { return len(rig.describer.calls()) == 1 })
 	rig.commit(strokeAdd(page(1), stroke(8)))
-	rig.clock.advance(time.Minute)
+	rig.clock.Advance(time.Minute)
 	if calls := rig.describer.calls(); len(calls) != 1 {
 		t.Fatalf("a second job began while the first ran: %d", len(calls))
 	}
@@ -538,7 +475,7 @@ func TestNoteNamer_ANoteThatCannotBeDescribedNowStaysDue(t *testing.T) {
 			nil},
 		{"no ink", logOf(header("Blank"), pageAdd(page(1), 0, nil, link.BoundsFixed)),
 			func(*namerRig) {},
-			func(rig *namerRig) { rig.commit(strokeAdd(page(1), stroke(1))); rig.clock.advance(testSettle) },
+			func(rig *namerRig) { rig.commit(strokeAdd(page(1), stroke(1))); rig.clock.Advance(testSettle) },
 			nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -666,7 +603,7 @@ func TestNoteNamer_TheJobIsLabelledWithTheNote(t *testing.T) {
 	hold := make(chan struct{})
 	rig.describer.set(func(d *fakeDescriber) { d.hold = hold })
 	rig.settled(0)
-	rig.clock.advance(testSettle)
+	rig.clock.Advance(testSettle)
 	waitFor(t, func() bool { return len(rig.tracker.Active()) == 1 })
 	job := rig.tracker.Active()[0]
 	if job.JobID != "name-note:"+rig.uuid() || job.Label != "Naming Ideas" || job.DocID != rig.uuid() || job.Category != "ai" {

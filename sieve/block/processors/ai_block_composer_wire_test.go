@@ -96,7 +96,7 @@ func TestComposerWire_AsksAboutABlockOfThisDocument(t *testing.T) {
 	t.Cleanup(resetRegistry)
 
 	q := (&AIBlockProcessor{}).foldQuestion(
-		composerBlock(t, "asks about a block of this document"), block.DocView{UUID: foldDocUUID})
+		composerBlock(t, "asks about a block of this document"), block.DocView{ContainerAddressing: block.ContainerAddressing{UUID: foldDocUUID}})
 
 	if got := q.targets.names(); got != foldSelfLeaf {
 		t.Errorf("target = %q, want the block the composer named", got)
@@ -114,7 +114,7 @@ func TestComposerWire_AsksAboutTheWholeDocumentWithAnAttachment(t *testing.T) {
 	t.Cleanup(resetRegistry)
 
 	q := (&AIBlockProcessor{}).foldQuestion(
-		composerBlock(t, "asks about the whole document with an attachment"), block.DocView{UUID: foldDocUUID})
+		composerBlock(t, "asks about the whole document with an attachment"), block.DocView{ContainerAddressing: block.ContainerAddressing{UUID: foldDocUUID}})
 
 	if got := q.targets.names(); got != foldSelf {
 		t.Errorf("target = %q, want the whole-document address", got)

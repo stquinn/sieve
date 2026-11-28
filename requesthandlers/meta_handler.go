@@ -15,6 +15,7 @@ import (
 	"sieve/sieve/block"
 	"sieve/sieve/domain"
 	"sieve/sieve/ink"
+	"sieve/sieve/protocol"
 	"sieve/store"
 
 	"github.com/go-chi/chi/v5"
@@ -48,25 +49,46 @@ type metaPanelData struct {
 	HasAssets  bool
 	// InUseHint is why an in-use asset's Delete is disabled.
 	InUseHint string
-	// Notebook is the synced Digital Note shown, nil for anything else. A notebook shows its Meta
-	// tab only.
-	Notebook *metaNotebookView
+	// Container is the container shown that is not a document (a synced Digital Note, a chat), nil
+	// for anything else. It shows its Meta tab only.
+	Container *metaContainerView
 }
 
-// metaNotebookView is a synced Digital Note as the Meta tab shows it.
-type metaNotebookView struct {
+// HasHistory reports whether there are versions to list. The History tab is offered when there
+// are, and only then.
+func (d metaPanelData) HasHistory() bool { return len(d.Versions) > 0 }
+
+// metaContainerView is a container that is not a document as the Meta tab shows it: the fields
+// every such container is described by, the facts only its kind has, and the verbs it offers.
+type metaContainerView struct {
 	UUID string
-	// Name is what it is called; TabletTitle is the title the tablet wrote, "" when it is the name.
+	// Name is what it is called, shown under NameLabel ("Name" when that is ""); TabletTitle is the
+	// title its device wrote, "" when it is the name.
 	Name        string
+	NameLabel   string
 	TabletTitle string
-	Summary     string
-	Keywords    []string
-	Categories  []string
-	Device      string
-	Pages       int
-	Seq         uint32
-	// Described is the seq its description is of, 0 before it is named.
-	Described uint32
+	// Provenance are the rows that say who named and described it and when, shown beneath the name.
+	Provenance []MetaRow
+	Summary    string
+	// Keywords are shown under KeywordsLabel ("Keywords" when that is "").
+	Keywords      []string
+	KeywordsLabel string
+	Categories    []string
+	// Facts are what only this kind has to say, shown beneath the description.
+	Facts []MetaRow
+	// Topic is the workspace invalidation topic whose raising refetches the panel.
+	Topic protocol.Topic
+	// NameNow is the verb that describes the container at once.
+	NameNow metaNameNow
+	// RenameType is the type the sidebar's rename dialog is opened with for a container renamed by
+	// hand from here, "" for one that is not.
+	RenameType string
+}
+
+// metaNameNow is the button that describes a container at once: it posts to URL and says what
+// came of it beside itself, Failure when the server gives no reason.
+type metaNameNow struct {
+	Label, URL, Failure string
 }
 
 type metaViewData struct {
@@ -170,6 +192,9 @@ func (h *MetaHandler) handleMeta(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	data := h.buildMetaPanelData(uuid, tab)
+	if data.Tab == "history" && !data.HasHistory() {
+		data.Tab = "meta"
+	}
 	if err := h.Tmpl.ExecuteTemplate(w, "meta_panel.html", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
@@ -295,8 +320,8 @@ func (h *MetaHandler) buildMetaPanelData(uuidOrPromptName, tab string) metaPanel
 	if h.ServiceProvider.State != nil {
 		session := h.ServiceProvider.State.LoadSession()
 		if tab, open := session.Tab(uuidOrPromptName); open && !tab.IsDocument() {
-			if nb := h.notebookView(tab); nb != nil {
-				data.Notebook, data.Tab, data.FileName = nb, "meta", nb.Name
+			if v := h.containerView(tab); v != nil {
+				data.Container, data.Tab, data.FileName = v, "meta", v.Name
 			}
 			return data
 		}
@@ -318,19 +343,46 @@ func (h *MetaHandler) buildMetaPanelData(uuidOrPromptName, tab string) metaPanel
 	return data
 }
 
-// notebookView is the synced Digital Note tab shows as the Meta tab shows it; nil when tab shows
-// none.
-func (h *MetaHandler) notebookView(tab domain.Tab) *metaNotebookView {
-	if h.ServiceProvider.Ink == nil || tab.ContainerKind() != ink.KindDigitalNote {
+// containerView is the container tab shows, as the Meta tab shows it; nil when its kind has no
+// meta to show.
+func (h *MetaHandler) containerView(tab domain.Tab) *metaContainerView {
+	switch tab.ContainerKind() {
+	case ink.KindDigitalNote:
+		return h.notebookView(tab.ID)
+	case domain.ChatKind:
+		return h.chatView(tab.ID)
+	}
+	return nil
+}
+
+// notebookView is the synced Digital Note uuid as the Meta tab shows it; nil when there is none.
+func (h *MetaHandler) notebookView(uuid string) *metaContainerView {
+	if h.ServiceProvider.Ink == nil {
 		return nil
 	}
-	uuid := tab.ID
 	note, d, described, err := h.ServiceProvider.Ink.Notebook(uuid)
 	if err != nil {
 		return nil
 	}
-	v := &metaNotebookView{UUID: uuid, Name: note.Name, Summary: d.Summary, Keywords: d.Keywords, Categories: d.Categories,
-		Device: note.Device, Pages: note.Pages, Seq: note.Seq, Described: described}
+	describedAs := "not yet named"
+	if described > 0 {
+		describedAs = fmt.Sprintf("seq %d", described)
+	}
+	device := note.Device
+	if device == "" {
+		device = "—"
+	}
+	v := &metaContainerView{UUID: uuid, Name: note.Name, Summary: d.Summary, Keywords: d.Keywords, Categories: d.Categories,
+		Facts: []MetaRow{
+			{"Device", device},
+			{"Pages", fmt.Sprintf("%d", note.Pages)},
+			{"Synced to", fmt.Sprintf("seq %d", note.Seq)},
+			{"Described as of", describedAs},
+		},
+		Topic: protocol.TopicInk,
+		NameNow: metaNameNow{Label: "Refresh name and summary", URL: "/api/ink/notes/" + uuid + "/describe",
+			Failure: "Could not name this notebook"},
+	}
 	if v.Name == "" {
 		v.Name = ink.UntitledNotebook
 	}
@@ -338,6 +390,35 @@ func (h *MetaHandler) notebookView(tab domain.Tab) *metaNotebookView {
 		v.TabletTitle = note.Title
 	}
 	return v
+}
+
+// chatView is the chat uuid as the Meta tab shows it; nil when there is none.
+func (h *MetaHandler) chatView(uuid string) *metaContainerView {
+	if h.ServiceProvider.Chats == nil {
+		return nil
+	}
+	chat, err := h.ServiceProvider.Chats.Load(uuid)
+	if err != nil {
+		return nil
+	}
+	d, _ := chat.Description()
+	cli, at := chat.DescribedBy()
+	userName, modified := "—", "—"
+	if chat.NamedByHand() {
+		userName = chat.Title()
+	}
+	if t := metaFmtTime(chat.Modified()); t != "" {
+		modified = t
+	}
+	return &metaContainerView{UUID: uuid, Name: chat.Name(), NameLabel: "Display name", KeywordsLabel: "Tags",
+		Summary: d.Summary, Keywords: d.Keywords, Categories: d.Categories,
+		Provenance: []MetaRow{{"Name you gave", userName}, {"CLI", h.orDash(cli)}, {"AI described", h.orDash(metaFmtTimeStr(at))}},
+		Facts:      []MetaRow{{"Modified", modified}},
+		Topic:      protocol.TopicChats,
+		NameNow: metaNameNow{Label: "Name now", URL: "/api/chat/" + uuid + "/describe",
+			Failure: "Could not name this chat"},
+		RenameType: domain.ChatKind,
+	}
 }
 
 func toMetaView(d domain.Document) *metaViewData {
@@ -555,8 +636,16 @@ func metaFmtTime(t time.Time) string {
 	return t.Format("Jan 2, 2006, 3:04 PM")
 }
 
+// orDash is s, or the dash a Meta row shows for what has no value.
+func (h *MetaHandler) orDash(s string) string {
+	if s == "" {
+		return "—"
+	}
+	return s
+}
+
 func metaFmtTimeStr(s string) string {
-	t, err := time.Parse("2006-01-02T15:04:05", s)
+	t, err := time.Parse(domain.MetaAiTimeLayout, s)
 	if err != nil {
 		return s
 	}

@@ -135,6 +135,25 @@ func (b *WorkspaceBroadcast) InkChanged() {
 	b.Invalidate(protocol.TopicInk)
 }
 
+// ChatsChanged tells every workspace socket that the set of chats, or a chat's
+// name, changed: what the sidebar's Chats item shows is stale.
+func (b *WorkspaceBroadcast) ChatsChanged() {
+	b.Invalidate(protocol.TopicChats)
+}
+
+// ChatNamed satisfies editor.ChatListener: a chat's name is on the Chats item
+// and on its tab, so both views are stale.
+func (b *WorkspaceBroadcast) ChatNamed(string, string) {
+	b.Invalidate(protocol.TopicChats)
+	b.Invalidate(protocol.TopicSession)
+}
+
+// ChatAsked satisfies editor.ChatListener: the Chats item lists chats newest
+// first, each with the time it was last asked, so it is stale.
+func (b *WorkspaceBroadcast) ChatAsked(string) {
+	b.Invalidate(protocol.TopicChats)
+}
+
 // SessionChanged satisfies ink.Invalidator: the session's tabs changed.
 func (b *WorkspaceBroadcast) SessionChanged() {
 	b.Invalidate(protocol.TopicSession)

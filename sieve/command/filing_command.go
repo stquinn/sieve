@@ -1,8 +1,10 @@
 package command
 
 import (
+	"errors"
 	"fmt"
 
+	"sieve/sieve/domain"
 	"sieve/sieve/services"
 )
 
@@ -107,7 +109,8 @@ func (c *FilingCommand) Family() string      { return FamilyAI }
 func (c *FilingCommand) ResultKind() string { return "" }
 
 // Build refuses up front what the retired endpoints refused with a 404 — a
-// command with no document to act on, or one naming a document that is gone.
+// command with no document to act on, or one naming a document that is gone —
+// and an invocation from a container that is not a document, such as a chat.
 // The invocation site names it: a lens authoring the context puts the open
 // document in DocUUID, which is the same id the endpoints took in their path.
 func (c *FilingCommand) Build(_ string, ctx Context) (Job, error) {
@@ -119,6 +122,9 @@ func (c *FilingCommand) Build(_ string, ctx Context) (Job, error) {
 		return Job{}, fmt.Errorf("/%s is unavailable — no library is attached", c.name)
 	}
 	if _, err := c.docs.LoadByUUID(id); err != nil {
+		if errors.Is(err, domain.ErrNotADocument) {
+			return Job{}, fmt.Errorf("/%s files a document, and this is not one", c.name)
+		}
 		return Job{}, fmt.Errorf("/%s: document not found: %s", c.name, id)
 	}
 

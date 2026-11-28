@@ -50,28 +50,22 @@ type recordingAssets struct {
 	lastID   string
 }
 
-func (r *recordingAssets) Save(_ store.Category, _, assetID string, data []byte) (*domain.ImageAsset, error) {
+func (r *recordingAssets) Save(_, assetID string, data []byte) (*domain.ImageAsset, error) {
 	r.saves++
 	r.lastData = data
 	r.lastID = assetID
 	return &domain.ImageAsset{S: fakeAssetStorable{ref: assetID}}, nil
 }
 
+func (r *recordingAssets) OwnedKeys(string) ([]string, error) { return nil, nil }
+
+func (r *recordingAssets) PageAssetAddress(string, string) string { return "" }
+
 // ServeAssetData satisfies the read half of AssetsPort. The diagram job only ever
 // writes, so a read here means the job did something it should not.
 func (r *recordingAssets) ServeAssetData(docUUID, filename string) ([]byte, error) {
 	return nil, fmt.Errorf("recordingAssets: unexpected read of %s/%s", docUUID, filename)
 }
-
-// fakeDocuments errors on LoadByUUID so saveAsset skips the doc-attach branch —
-// the job-order test needs no real document.
-type fakeDocuments struct{ saves int }
-
-func (f *fakeDocuments) LoadByUUID(string) (domain.Document, error) {
-	return nil, errors.New("no doc")
-}
-func (f *fakeDocuments) Save(d domain.Document) (domain.Document, error) { f.saves++; return d, nil }
-func (f *fakeDocuments) PageAssetAddress(string, string) string          { return "" }
 
 type fakeAssetStorable struct{ ref string }
 
@@ -314,10 +308,9 @@ func TestDiagramProcessor_job_savesAssetBeforeComplete(t *testing.T) {
 	assets := &recordingAssets{}
 	pl := &fakePlantuml{svg: []byte("<svg>ok</svg>")}
 	p := NewDiagramProcessor(block.BlockServices{
-		State:     darkState(),
-		Plantuml:  pl,
-		Assets:    assets,
-		Documents: &fakeDocuments{},
+		State:    darkState(),
+		Plantuml: pl,
+		Assets:   assets,
 	})
 	blk := plantumlBlock("A -> B", "render", "")
 	job := describe(p, blk)
@@ -367,10 +360,9 @@ func TestDiagramProcessor_job_renderErrorNoAssetNoHash(t *testing.T) {
 	assets := &recordingAssets{}
 	pl := &fakePlantuml{err: errors.New("boom")}
 	p := NewDiagramProcessor(block.BlockServices{
-		State:     darkState(),
-		Plantuml:  pl,
-		Assets:    assets,
-		Documents: &fakeDocuments{},
+		State:    darkState(),
+		Plantuml: pl,
+		Assets:   assets,
 	})
 	blk := plantumlBlock("A -> B", "render", "")
 	job := describe(p, blk)
@@ -409,10 +401,9 @@ func TestDiagramProcessor_job_svgAssetKey(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			assets := &recordingAssets{}
 			p := NewDiagramProcessor(block.BlockServices{
-				State:     darkState(),
-				Plantuml:  &fakePlantuml{svg: []byte("<svg>rerender</svg>")},
-				Assets:    assets,
-				Documents: &fakeDocuments{},
+				State:    darkState(),
+				Plantuml: &fakePlantuml{svg: []byte("<svg>rerender</svg>")},
+				Assets:   assets,
 			})
 			blk := plantumlBlock("A -> B", "render", "")
 			blk.Attrs["svgAsset"] = tc.svgAsset
@@ -589,10 +580,9 @@ func TestDiagramProcessor_TransformSieveCopyStripsRenderState(t *testing.T) {
 	assets := &recordingAssets{}
 	pl := &fakePlantuml{svg: []byte("<svg>ok</svg>")}
 	p2 := NewDiagramProcessor(block.BlockServices{
-		State:     darkState(),
-		Plantuml:  pl,
-		Assets:    assets,
-		Documents: &fakeDocuments{},
+		State:    darkState(),
+		Plantuml: pl,
+		Assets:   assets,
 	})
 	blk := &domain.SieveBlock{ID: "di-new", Kind: "diagram", Attrs: attrs}
 	job := describe(p2, blk)

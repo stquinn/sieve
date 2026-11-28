@@ -462,6 +462,25 @@ describe('DocumentService.persist — fire-and-forget persistence (the save is a
   })
 })
 
+describe('DocumentService.chatAppendExchange — a question asked in a chat, unanswered', () => {
+  beforeEach(() => FakeSocket.reset())
+
+  it('sends each block as id, kind and attrs — the creator\'s name lifted from attrs.id — and awaits nothing', () => {
+    const { documentService, sock } = serviceRig({ uuid: 'chat-1' })
+    const named = { kind: 'code', attrs: { id: 'b-1', source: 'x' } }
+    expect(documentService.chatAppendExchange('chat-1', [{ kind: 'prose', attrs: { content: 'why?' } }, named])).toBeUndefined()
+    expect(sock.sentOfType('chat-append-exchange')).toEqual([{
+      type: 'chat-append-exchange',
+      question: [{ id: '', kind: 'prose', attrs: { content: 'why?' } }, { id: 'b-1', kind: 'code', attrs: { id: 'b-1', source: 'x' } }],
+    }])
+  })
+
+  it('drops for a channel-less uuid rather than throwing', () => {
+    const { documentService } = serviceRig({ uuid: null })
+    expect(() => documentService.chatAppendExchange('nobody', [{ kind: 'prose', attrs: { content: 'x' } }])).not.toThrow()
+  })
+})
+
 // ── Membership + raw-content frames, as they leave ────────────────────────────
 
 describe('DocumentService membership verbs — the block-op envelope (FROZEN)', () => {

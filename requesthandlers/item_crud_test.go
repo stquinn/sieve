@@ -6,8 +6,10 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"reflect"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -15,10 +17,12 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"sieve/ident"
 	"sieve/sieve"
 	"sieve/sieve/ai"
 	"sieve/sieve/block"
 	"sieve/sieve/block/processors"
+	"sieve/sieve/clocktest"
 	"sieve/sieve/domain"
 	"sieve/sieve/editor"
 	"sieve/sieve/ink"
@@ -78,23 +82,37 @@ func newItemServerCountingJobs(t *testing.T) (*httptest.Server, *sieve.ServicePr
 	es := editor.NewEditorService(ds, block.NewDocumentCodec(block.GlobalRegistry()), 0)
 	es.SetContainers(containers)
 	containers.SetChangeListener(es)
+	chats, err := services.NewChatService(fs, block.NewChatCodec(block.GlobalRegistry()))
+	if err != nil {
+		t.Fatalf("NewChatService: %v", err)
+	}
+	es.SetChats(chats)
 	jobs := services.NewJobTracker()
 	transitions := &atomic.Int32{}
 	jobs.Notify = func() { transitions.Add(1) }
 	es.SetJobs(jobs)
-	es.SetEngine(services.NewJobEngine(map[string]int{block.CategoryAI: 1}, 1, jobs))
+	engine := services.NewJobEngine(map[string]int{block.CategoryAI: 1}, 1, jobs)
+	es.SetEngine(engine)
 	t.Cleanup(es.CloseAll)
-	nodes := editor.NewRouter(editor.NewNotesSource(ds), editor.NewBlockSource(containers))
-	sp := &sieve.ServiceProvider{
-		Store: fs, Documents: ds, State: state, Containers: containers, Editor: es, Jobs: jobs,
-		Nodes: nodes, Search: nodes,
-		Assets: services.NewAssetService(fs, ""),
-	}
-
+	nodes := editor.NewRouter(editor.NewNotesSource(ds), editor.NewChatSource(chats), editor.NewBlockSource(containers))
 	broadcast := NewWorkspaceBroadcast(nil)
+	es.SetSavedNotifier(broadcast)
+	sp := &sieve.ServiceProvider{
+		Store: fs, Documents: ds, State: state, Containers: containers, Chats: chats, Editor: es, Jobs: jobs, Engine: engine,
+		Nodes: nodes, Search: nodes,
+		Assets:    services.NewAssetService(fs, ""),
+		ChatNamer: editor.NewChatNamer(chats, &stubChatDescriber{tier: domain.TierSmart}, engine, jobs, state, broadcast),
+	}
 
 	r := chi.NewRouter()
 	(&SideBarHandler{ServiceProvider: sp, Tmpl: tmpl}).RegisterPaths(r)
+	(&ChatHandler{
+		ServiceProvider:      sp,
+		Tmpl:                 tmpl,
+		EmitContainerDeleted: broadcast.ContainerDeleted,
+		EmitSessionChanged:   func() { sessionChanges++ },
+		EmitChatsChanged:     broadcast.ChatsChanged,
+	}).RegisterPaths(r)
 	(&NoteHandler{ServiceProvider: sp, Tmpl: tmpl, EmitContainerDeleted: broadcast.ContainerDeleted}).RegisterPaths(r)
 	(&ContextMenuHandler{
 		ServiceProvider:      sp,
@@ -105,11 +123,22 @@ func newItemServerCountingJobs(t *testing.T) (*httptest.Server, *sieve.ServicePr
 	}).RegisterPaths(r)
 	(&SessionHandler{ServiceProvider: sp, Tmpl: tmpl, EmitSessionChanged: func() { sessionChanges++ }}).RegisterPaths(r)
 	(&TabHandler{ServiceProvider: sp, Tmpl: tmpl}).RegisterPaths(r)
+	(&MetaHandler{ServiceProvider: sp, Tmpl: tmpl, EmitNotesChanged: func() {}}).RegisterPaths(r)
 	NewAssetHandler(sp, nil).RegisterPaths(r)
 	NewWsHandler(sp, broadcast, testWSToken).RegisterPaths(r)
 	srv := httptest.NewServer(r)
 	t.Cleanup(srv.Close)
 	return srv, sp, &sessionChanges, transitions
+}
+
+// stubChatDescriber is the item server's chat describer: it answers every description with a
+// title that names the turns it was shown, at tier, and runs no CLI.
+type stubChatDescriber struct{ tier domain.Tier }
+
+func (d *stubChatDescriber) Tier() domain.Tier { return d.tier }
+
+func (d *stubChatDescriber) DescribeChat(_ string, turns []string) (domain.NoteMetadata, error) {
+	return domain.NoteMetadata{Title: fmt.Sprintf("Described from %d turns", len(turns)), Summary: "A summary."}, nil
 }
 
 // do sends one request and returns its status and body.
@@ -1139,5 +1168,513 @@ func TestTabStrip_NotebookTabsCarryTheirOwnMenus(t *testing.T) {
 	}
 	if strings.Contains(body, ">digital-note<") {
 		t.Errorf("a tab reads its kind:\n%s", body)
+	}
+}
+
+// The Chats item is the tree's, in a mount of its own that refreshes on the chats invalidation,
+// which is also where the item is served, and is there while no chat is. It is a row that expands
+// as a folder does, remembered; expanded it lists every chat by its name, newest first, from the
+// one search, marks the open tab's, and says at each row's right when its chat last changed.
+func TestChatsSidebar_IsAnItemOfTheTreeAndListsEveryChatNewestFirst(t *testing.T) {
+	srv, sp := newItemServer(t)
+	get := func(path string) string {
+		t.Helper()
+		status, body := do(t, http.MethodGet, srv.URL+path, "", "")
+		if status != http.StatusOK {
+			t.Fatalf("GET %s: %d %s", path, status, body)
+		}
+		return body
+	}
+	mount := `<div id="sidebar-chats" class="ink-tree" hx-get="/ui/views/sidebar/chats" hx-trigger="sieve:invalidate-chats from:document" hx-swap="innerHTML">`
+	tree := get("/ui/views/sidebar")
+	if at, empty := strings.Index(tree, mount), strings.Index(tree, "No filed documents yet"); at < 0 || empty < at {
+		t.Fatalf("an empty library's tree is\n%s", tree)
+	}
+	if item := get("/ui/views/sidebar/chats"); !strings.Contains(item, ">Chats<") || strings.Contains(item, "<html") {
+		t.Errorf("the item alone is\n%s", item)
+	}
+
+	var ids []string
+	for _, title := range []string{"Alpha", "Beta"} {
+		chat, err := sp.Chats.Create(title)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, chat.UUID())
+	}
+	if strings.Contains(get("/ui/views/sidebar/chats"), "Alpha") {
+		t.Error("the Chats item starts expanded")
+	}
+	if status, body := do(t, http.MethodPatch, srv.URL+"/api/folder/chats", "application/x-www-form-urlencoded", "open=true"); status != http.StatusOK ||
+		!strings.Contains(body, "Alpha") || !strings.Contains(body, "No filed documents yet") {
+		t.Fatalf("expanding Chats: %d\n%s", status, body)
+	}
+	if status, body := do(t, http.MethodPost, srv.URL+"/api/container/open/"+ids[0], "", ""); status != http.StatusOK {
+		t.Fatalf("open: %d %s", status, body)
+	}
+	item := get("/ui/views/sidebar/chats")
+	beta, alpha := strings.Index(item, ">Beta<"), strings.Index(item, ">Alpha<")
+	if beta < 0 || alpha < beta {
+		t.Errorf("the chats are not newest first:\n%s", item)
+	}
+	for _, want := range []string{
+		`data-ctx-id="` + ids[0] + `"
+  data-ctx-type="chat"
+  data-ctx-name="Alpha"
+  data-active`,
+		`window.sieveWorkspace.open('` + ids[1] + `')`,
+		`<span class="ink-tree__label">Alpha</span>
+  <span class="chats-tree__when">`,
+	} {
+		if !strings.Contains(item, want) {
+			t.Errorf("no %q in\n%s", want, item)
+		}
+	}
+}
+
+// A chat's row says when the chat last changed, in the reader's zone: the time on the day it is
+// read, the weekday on the six days before, and the day and month before those, or after the day
+// it is read. A row whose chat does not say when it changed says nothing there.
+func TestChatsSidebar_SaysWhenEachChatLastChanged(t *testing.T) {
+	zone := time.FixedZone("reader", 2*60*60)
+	now := time.Date(2026, time.November, 27, 9, 30, 0, 0, zone)
+	for _, tc := range []struct {
+		name     string
+		modified string
+		want     string
+	}{
+		{"earlier today", "2026-11-27T07:05:00Z", "09:05"},
+		{"today in the reader's zone though yesterday in UTC", "2026-11-26T22:30:00Z", "00:30"},
+		{"yesterday", "2026-11-26T12:00:00+02:00", "Thu"},
+		{"six days before", "2026-11-21T23:59:00+02:00", "Sat"},
+		{"a week before", "2026-11-20T10:00:00+02:00", "20 Nov"},
+		{"a year before", "2025-08-21T10:00:00+02:00", "21 Aug"},
+		{"after the day it is read", "2026-11-28T10:00:00+02:00", "28 Nov"},
+		{"unknown", "", ""},
+		{"unreadable", "yesterday", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := (chatsSidebarView{}).changedAt(tc.modified, now); got != tc.want {
+				t.Errorf("changedAt(%q) = %q, want %q", tc.modified, got, tc.want)
+			}
+		})
+	}
+
+	h, _ := newTestSettingsHandler(t)
+	id := ident.New()
+	var v chatsSidebarView
+	v.show([]domain.Candidate{
+		{URI: domain.NewContainerAddress(id).String(), Title: "Parser error taxonomy", Kind: domain.ChatKind, Modified: "2026-11-24T08:00:00+02:00"},
+		{URI: domain.NewContainerAddress(ident.New()).String(), Title: "Undated", Kind: domain.ChatKind},
+	}, domain.Session{OpenFolders: []string{chatsTreeID}}, now)
+	var out strings.Builder
+	if err := h.Tmpl.ExecuteTemplate(&out, "chats_sidebar.html", v); err != nil {
+		t.Fatal(err)
+	}
+	if want := `<span class="ink-tree__label">Parser error taxonomy</span>
+  <span class="chats-tree__when">Tue</span>`; !strings.Contains(out.String(), want) {
+		t.Errorf("no %q in\n%s", want, out.String())
+	}
+	if n := strings.Count(out.String(), "chats-tree__when"); n != 1 {
+		t.Errorf("%d rows say when they changed, want only the dated one:\n%s", n, out.String())
+	}
+}
+
+// The Chats item lists its chats most recently changed first under quiet headings, Today,
+// Yesterday and Earlier as the reader's day falls, a heading shown only over chats, each row keeping
+// its time at its right; a chat that does not say when it changed is listed under Earlier.
+func TestChatsSidebar_GroupsTheChatsByTheDayTheyLastChanged(t *testing.T) {
+	zone := time.FixedZone("reader", 2*60*60)
+	now := time.Date(2026, time.November, 27, 9, 30, 0, 0, zone)
+	hit := func(title, modified string) domain.Candidate {
+		return domain.Candidate{URI: domain.NewContainerAddress(ident.New()).String(), Title: title, Kind: domain.ChatKind, Modified: modified}
+	}
+	today, todayEarlier := hit("This morning", "2026-11-27T07:05:00Z"), hit("Just after midnight", "2026-11-26T22:30:00Z")
+	yesterday := hit("From yesterday", "2026-11-26T12:00:00+02:00")
+	lastWeek, undated := hit("Last week", "2026-11-20T10:00:00+02:00"), hit("Undated", "")
+	for _, tc := range []struct {
+		name string
+		hits []domain.Candidate
+		want map[string][]string
+	}{
+		{"every group", []domain.Candidate{today, todayEarlier, yesterday, lastWeek, undated}, map[string][]string{
+			"Today": {"This morning", "Just after midnight"}, "Yesterday": {"From yesterday"}, "Earlier": {"Last week", "Undated"}}},
+		{"no chat today", []domain.Candidate{yesterday, lastWeek}, map[string][]string{"Yesterday": {"From yesterday"}, "Earlier": {"Last week"}}},
+		{"only today", []domain.Candidate{today}, map[string][]string{"Today": {"This morning"}}},
+		{"no chats", nil, map[string][]string{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var v chatsSidebarView
+			v.show(tc.hits, domain.Session{OpenFolders: []string{chatsTreeID}}, now)
+			got := map[string][]string{}
+			var order []string
+			for _, g := range v.Groups {
+				order = append(order, g.Heading)
+				for _, c := range g.Chats {
+					got[g.Heading] = append(got[g.Heading], c.Title)
+				}
+			}
+			if fmt.Sprint(got) != fmt.Sprint(tc.want) {
+				t.Errorf("groups = %v, want %v", got, tc.want)
+			}
+			if !slices.IsSortedFunc(order, func(a, b string) int {
+				rank := map[string]int{"Today": 0, "Yesterday": 1, "Earlier": 2}
+				return rank[a] - rank[b]
+			}) {
+				t.Errorf("headings in the order %v", order)
+			}
+		})
+	}
+
+	h, _ := newTestSettingsHandler(t)
+	var v chatsSidebarView
+	v.show([]domain.Candidate{today, lastWeek}, domain.Session{OpenFolders: []string{chatsTreeID}}, now)
+	var out strings.Builder
+	if err := h.Tmpl.ExecuteTemplate(&out, "chats_sidebar.html", v); err != nil {
+		t.Fatal(err)
+	}
+	item := out.String()
+	todayAt, morning, earlierAt, week := strings.Index(item, ">Today<"), strings.Index(item, ">This morning<"), strings.Index(item, ">Earlier<"), strings.Index(item, ">Last week<")
+	if todayAt < 0 || morning < todayAt || earlierAt < morning || week < earlierAt || strings.Contains(item, ">Yesterday<") {
+		t.Errorf("the item is not grouped under its headings:\n%s", item)
+	}
+	if want := `<span class="ink-tree__label">This morning</span>
+  <span class="chats-tree__when">09:05</span>`; !strings.Contains(item, want) {
+		t.Errorf("a row lost its time: no %q in\n%s", want, item)
+	}
+}
+
+// answeredChatExchange is an exchange of a chat with its answer: a completed ai-block whose
+// question and answer are each one prose element.
+func answeredChatExchange(question, answer string) domain.SieveBlock {
+	b := domain.NewSieveBlock(block.KindAIBlock, "", map[string]interface{}{"status": block.BlockStatusComplete})
+	b.SetElements(block.QuestionAttr, domain.Elements{domain.NewSieveBlock(block.KindProse, "", map[string]interface{}{"content": question})})
+	b.SetElements(block.AnswerAttr, domain.Elements{domain.NewSieveBlock(block.KindProse, "", map[string]interface{}{"content": answer})})
+	return b
+}
+
+// Rename and Name now on a chat call its two routes. A name given by hand, from the dialog's form
+// or a typed client's JSON, is the chat's wherever it is shown, raising the chats and session
+// topics, and survives Name now, which describes the rest; a blank one hands naming back, and Name
+// now then names the chat by its description. What is no chat is 404, and a chat with no answer
+// yet cannot be named now, which is said in words.
+func TestChatRenameAndDescribe_NameTheChatWhereverItIsShown(t *testing.T) {
+	block.RegisterProcessor(processors.NewAIBlockProcessor(block.BlockServices{}))
+	srv, sp := newItemServer(t)
+	chat, err := sp.Chats.Create("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	chat.SetExchanges([]domain.SieveBlock{answeredChatExchange("What errors can a parser raise?", "Three kinds.")})
+	if chat, err = sp.Chats.Save(chat); err != nil {
+		t.Fatal(err)
+	}
+	id := chat.UUID()
+	session := sp.State.LoadSession()
+	session.Tabs = append(session.Tabs, domain.Tab{ID: id, Kind: domain.ChatKind, DisplayName: chat.Name()})
+	if err := sp.State.SaveSession(session); err != nil {
+		t.Fatal(err)
+	}
+	named := func(want string) {
+		t.Helper()
+		got, err := sp.Chats.Load(id)
+		if err != nil || got.Name() != want {
+			t.Fatalf("the chat is named %q (%v), want %q", got.Name(), err, want)
+		}
+		if status, tabs := do(t, http.MethodGet, srv.URL+"/ui/views/tabs", "", ""); status == http.StatusOK && !strings.Contains(tabs, ">"+want+"<") {
+			t.Errorf("the tab is not named %q:\n%s", want, tabs)
+		}
+	}
+	describe := func() (int, string) {
+		t.Helper()
+		status, body := do(t, http.MethodPost, srv.URL+"/api/chat/"+id+"/describe", "", "")
+		clocktest.WaitFor(t, func() bool { return len(sp.Jobs.Active())+len(sp.Jobs.Queued()) == 0 })
+		waitFor(t, func() bool {
+			c, _ := sp.Chats.Load(id)
+			_, of := c.Description()
+			return of > 0 || status != http.StatusNoContent
+		}, "the description was never kept")
+		return status, body
+	}
+
+	ws := dialWorkspaceWS(t, srv)
+	defer ws.Close()
+	if status, body := do(t, http.MethodPost, srv.URL+"/api/chat/"+id+"/rename", "application/x-www-form-urlencoded", "name=+Mine+"); status != http.StatusNoContent {
+		t.Fatalf("rename: %d %s", status, body)
+	}
+	readInvalidations(t, ws, protocol.TopicChats, protocol.TopicSession)
+	named("Mine")
+	if status, body := describe(); status != http.StatusNoContent {
+		t.Fatalf("describe: %d %s", status, body)
+	}
+	named("Mine")
+	if c, _ := sp.Chats.Load(id); func() string { d, _ := c.Description(); return d.Summary }() != "A summary." {
+		t.Error("Name now did not describe the rest of a chat named by hand")
+	}
+
+	if status, body := do(t, http.MethodPost, srv.URL+"/api/chat/"+id+"/rename", "application/json", `{"name":""}`); status != http.StatusNoContent {
+		t.Fatalf("rename to blank: %d %s", status, body)
+	}
+	named("What errors can a parser raise?")
+	if status, body := describe(); status != http.StatusNoContent {
+		t.Fatalf("describe: %d %s", status, body)
+	}
+	named("Described from 1 turns")
+
+	empty, err := sp.Chats.Create("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name, path string
+		status     int
+		says       string
+	}{
+		{"rename no chat", "/api/chat/" + ident.New() + "/rename", http.StatusNotFound, "No such chat"},
+		{"describe no chat", "/api/chat/" + ident.New() + "/describe", http.StatusNotFound, "not a chat"},
+		{"describe a chat with no answer", "/api/chat/" + empty.UUID() + "/describe", http.StatusConflict, "no answer"},
+	} {
+		if status, body := do(t, http.MethodPost, srv.URL+tc.path, "application/x-www-form-urlencoded", "name=x"); status != tc.status || !strings.Contains(body, tc.says) {
+			t.Errorf("%s: %d %q, want %d saying %q", tc.name, status, body, tc.status, tc.says)
+		}
+	}
+}
+
+// New Chat makes an untitled chat through the chat service and opens it in the active tab of the
+// workspace it answers with: a CHAT tab named by the chat and carrying a chat's menu, and the
+// chats topic is raised on the workspace wire for the creation. A chat is never a buffer: closing its tab files
+// nothing and keeps the chat.
+func TestChatCreate_MakesAChatAndATabThatIsNeverABuffer(t *testing.T) {
+	srv, sp, _, transitions := newItemServerCountingJobs(t)
+	ws := dialWorkspaceWS(t, srv)
+	defer ws.Close()
+
+	status, body := do(t, http.MethodPost, srv.URL+"/api/chat", "", "")
+	if status != http.StatusOK {
+		t.Fatalf("new chat: %d %s", status, body)
+	}
+	tabs := sp.State.LoadSession().Tabs
+	if len(tabs) != 1 || tabs[0].Kind != domain.ChatKind || tabs[0].IsDocument() || tabs[0].DisplayName != "Untitled chat" {
+		t.Fatalf("session tabs = %+v, want the chat's tab", tabs)
+	}
+	id := tabs[0].ID
+	if chat, err := sp.Chats.Load(id); err != nil || chat.Name() != "Untitled chat" {
+		t.Fatalf("the chat: %v, %v", chat, err)
+	}
+	for _, want := range []string{
+		`data-tab-kind="chat"`, `data-tab-active="true"`, `data-ctx-type="chat"`, `data-ctx-name="Untitled chat"`,
+		`data-tab-tag="chat">CHAT<`, `data-uuid="` + id + `"`, `data-kind="chat"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the answer lacks %s:\n%s", want, body)
+		}
+	}
+	// The kind tag is set before the name, small, mono and in the kind's colour, on no pill.
+	tag := strings.Index(body, `data-tab-tag="chat"`)
+	if name := strings.Index(body, ">Untitled chat<"); tag < 0 || name < tag {
+		t.Errorf("the CHAT tag does not come before the tab's name:\n%s", body)
+	}
+	if open := strings.LastIndex(body[:tag], "<span"); !strings.Contains(body[open:tag], "font-mono") ||
+		!strings.Contains(body[open:tag], "text-tn-teal") || strings.Contains(body[open:tag], "bg-") {
+		t.Errorf("the CHAT tag is drawn as %s", body[open:tag])
+	}
+	readInvalidations(t, ws, protocol.TopicChats)
+
+	before := transitions.Load()
+	if status, body := do(t, http.MethodPost, srv.URL+"/api/tabs/close", "application/json", `{"ids":["`+id+`"]}`); status != http.StatusOK {
+		t.Fatalf("close: %d %s", status, body)
+	}
+	sp.Editor.WaitForJobs()
+	if got := transitions.Load(); got != before {
+		t.Errorf("closing a chat's tab moved the job tracker %d time(s)", got-before)
+	}
+	if _, err := sp.Chats.Load(id); err != nil {
+		t.Errorf("closing the tab deleted the chat: %v", err)
+	}
+	for _, tab := range sp.State.LoadSession().Tabs {
+		if tab.ID == id {
+			t.Error("the chat's tab survived its close")
+		}
+	}
+}
+
+// Deleting a chat asks first, in the chat's own words, then removes the chat, its history and the
+// files it keeps through the chat service, ends its open session and answers with the workspace,
+// its tab gone, announcing the deletion and the chats topic. What is no chat is 404 and nothing
+// else is touched.
+func TestChatDelete_RemovesTheChatItsFilesAndItsTab(t *testing.T) {
+	srv, sp := newItemServer(t)
+	chat, err := sp.Chats.Create("Doomed")
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := chat.UUID()
+	if _, err := sp.Chats.SaveAsset(chat, "notes.txt", []byte("kept")); err != nil {
+		t.Fatal(err)
+	}
+	if status, body := do(t, http.MethodPost, srv.URL+"/api/container/open/"+id, "", ""); status != http.StatusOK {
+		t.Fatalf("open: %d %s", status, body)
+	}
+	if err := sp.Editor.Open(id); err != nil || !sp.Editor.IsChat(id) {
+		t.Fatalf("the chat is not open: %v", err)
+	}
+	note, err := sp.Documents.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	status, dialog := do(t, http.MethodGet, srv.URL+"/ui/views/sidebar/dialog/delete?type=chat&name=Doomed&id="+id, "", "")
+	if status != http.StatusOK || !strings.Contains(dialog, `hx-delete="/api/chat/`+id+`"`) || !strings.Contains(dialog, "Delete Chat") {
+		t.Fatalf("the dialog: %d\n%s", status, dialog)
+	}
+	if status, _ := do(t, http.MethodDelete, srv.URL+"/api/chat/"+note.UUID(), "", ""); status != http.StatusNotFound {
+		t.Errorf("deleting a note as a chat: %d, want 404", status)
+	}
+	if _, err := sp.Documents.LoadByUUID(note.UUID()); err != nil {
+		t.Errorf("the note was touched: %v", err)
+	}
+
+	ws := dialWorkspaceWS(t, srv)
+	defer ws.Close()
+	status, body := do(t, http.MethodDelete, srv.URL+"/api/chat/"+id, "", "")
+	if status != http.StatusOK || !strings.Contains(body, `hx-swap-oob="innerHTML:#htmx-sidebar"`) || strings.Contains(body, `data-tab-id="`+id+`"`) {
+		t.Fatalf("delete: %d\n%s", status, body)
+	}
+	if _, err := sp.Chats.Load(id); !errors.Is(err, domain.ErrNotChat) {
+		t.Errorf("the chat survived: %v", err)
+	}
+	if _, err := sp.Store.LoadAsset(domain.Chats, id, "notes.txt"); err == nil {
+		t.Error("the chat's file survived")
+	}
+	if sp.Editor.IsChat(id) {
+		t.Error("the chat's session survived")
+	}
+	for _, tab := range sp.State.LoadSession().Tabs {
+		if tab.ID == id {
+			t.Error("the chat's tab survived")
+		}
+	}
+	readInvalidations(t, ws, protocol.TopicChats)
+}
+
+// A chat's tab takes part in the workspace's Meta panel as any container that is not a document
+// does: its name, summary, keywords and categories, who named it, what it was described as of
+// and when it last changed, with Name now posting to the chat's describe route and Rename…
+// opening the rename dialog on the chat's name, and the panel refetching on the chats topic. A
+// chat has no history to open, so the panel offers no History tab, and asking for it shows Meta.
+func TestMetaPanel_ShowsAChatsMeta(t *testing.T) {
+	block.RegisterProcessor(processors.NewAIBlockProcessor(block.BlockServices{}))
+	srv, sp := newItemServer(t)
+	row := func(label, value string) string {
+		return label + `</span>
+  <span class="text-tn-text text-base break-words flex-1">` + value + `</span>`
+	}
+	// The rows a note's Meta panel shows of who named and described a thing, in a note's words and
+	// order; a chat shows them as a note not yet evaluated does, with dashes.
+	provenance := func(userName, cli string) []string {
+		return []string{row("Name you gave", userName), row("CLI", cli)}
+	}
+	for _, tc := range []struct {
+		name   string
+		shape  func(t *testing.T, id string)
+		wants  []string
+		absent []string
+	}{
+		{"unnamed and undescribed", func(*testing.T, string) {},
+			append(provenance("—", "—"), row("AI described", "—"), row("Display name", "What errors can a parser raise?"), row("Tags", "—"), row("Categories", "—")),
+			[]string{"data-meta-keywords", "data-meta-categories", "Named by", "Described as of", "not yet"}},
+		{"described by the AI", func(t *testing.T, id string) {
+			if _, err := sp.Chats.Describe(id, domain.NoteMetadata{Title: "Parser errors", Summary: "Three kinds.",
+				Keywords: []string{"parser", "errors"}, Categories: []string{"Code"}, CLI: "agy"}, 1); err != nil {
+				t.Fatal(err)
+			}
+		}, append(provenance("—", "agy"), "AI described", row("Display name", "Parser errors"), "Three kinds.", "data-meta-keywords", ">Tags<", ">parser<", ">errors<", "data-meta-categories", ">Code<"),
+			[]string{"Named by", "the AI", "Described as of", row("AI described", "—")}},
+		{"named by hand", func(t *testing.T, id string) {
+			if _, err := sp.Chats.Rename(id, "Mine"); err != nil {
+				t.Fatal(err)
+			}
+		}, append(provenance("Mine", "—"), row("AI described", "—"), row("Display name", "Mine"), "name=Mine&type=chat"), []string{"Named by"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			chat, err := sp.Chats.Create("")
+			if err != nil {
+				t.Fatal(err)
+			}
+			chat.SetExchanges([]domain.SieveBlock{answeredChatExchange("What errors can a parser raise?", "Three kinds.")})
+			if chat, err = sp.Chats.Save(chat); err != nil {
+				t.Fatal(err)
+			}
+			id := chat.UUID()
+			tc.shape(t, id)
+			if err := sp.State.SaveSession(domain.Session{Tabs: []domain.Tab{{ID: id, Kind: domain.ChatKind, DisplayName: "x"}}}); err != nil {
+				t.Fatal(err)
+			}
+			wants := append([]string{
+				id,
+				`hx-post="/api/chat/` + id + `/describe"`, ">Name now<", "data-meta-name-now-status",
+				`hx-get="/ui/views/sidebar/dialog/rename?id=` + id, ">Rename…<",
+				`hx-get="/ui/views/meta?uuid=` + id + `&tab=meta" hx-trigger="sieve:invalidate-chats from:document" hx-target="#htmx-meta-panel"`,
+				`data-active-tab="meta"`,
+			}, tc.wants...)
+			absent := append([]string{"No meta", ">History<", ">Assets<", "Focus count"}, tc.absent...)
+			for _, tab := range []string{"meta", "history"} {
+				status, body := do(t, http.MethodGet, srv.URL+"/ui/views/meta?uuid="+id+"&tab="+tab, "", "")
+				if status != http.StatusOK {
+					t.Fatalf("GET meta: %d %s", status, body)
+				}
+				for _, want := range wants {
+					if !strings.Contains(body, want) {
+						t.Errorf("tab=%s: the chat's panel lacks %q:\n%s", tab, want, body)
+					}
+				}
+				for _, no := range absent {
+					if strings.Contains(body, no) {
+						t.Errorf("tab=%s: the chat's panel shows %q", tab, no)
+					}
+				}
+			}
+		})
+	}
+}
+
+// The History tab is offered when the container has versions to list and not otherwise: a note
+// with versions has it, and asking for it where there are none shows Meta.
+func TestMetaPanel_OffersHistoryOnlyWhereThereIsSome(t *testing.T) {
+	srv, sp := newItemServer(t)
+	doc, err := sp.Documents.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, body := range []string{"First.", "Second."} {
+		doc.SetBody([]byte(body))
+		if doc, err = sp.Documents.Save(doc); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if doc, err = sp.Documents.LoadByUUID(doc.UUID()); err != nil || len(doc.Versions()) == 0 {
+		t.Fatal("a saved note has no versions")
+	}
+	for _, tc := range []struct {
+		name, uuid, tab string
+		history         bool
+		active          string
+	}{
+		{"a note with versions, History asked", doc.UUID(), "history", true, "history"},
+		{"a note with versions, Meta asked", doc.UUID(), "meta", true, "meta"},
+		{"a prompt, History asked", "prompt:note-meta", "history", false, "meta"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			status, body := do(t, http.MethodGet, srv.URL+"/ui/views/meta?uuid="+url.QueryEscape(tc.uuid)+"&tab="+tc.tab, "", "")
+			if status != http.StatusOK {
+				t.Fatalf("GET meta: %d %s", status, body)
+			}
+			if has := strings.Contains(body, ">History<"); has != tc.history {
+				t.Errorf("History tab offered = %v, want %v", has, tc.history)
+			}
+			if want := `data-active-tab="` + tc.active + `"`; !strings.Contains(body, want) {
+				t.Errorf("panel lacks %s", want)
+			}
+		})
 	}
 }

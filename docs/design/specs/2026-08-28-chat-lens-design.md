@@ -20,6 +20,14 @@ Precedence when artifacts disagree:
   rails.
 - **Layout, proportion, spacing, visual states**: the mockups win — reproduce what they
   show.
+- **Where the mockups show what this spec no longer says, this spec wins**: an `@vN`
+  on the record stamp, Enter-to-send key hints, "branch from here" and "delete exchange"
+  in the record's menu, an answer landing whole.
+- **The mockups' record shell, its hover state, the column measure, the spacing between turns
+  and the composer under the thread no longer hold**: an exchange is drawn as two messages with
+  no shell round them, each with its own time and actions; the column is the Chat width setting;
+  spacing is the two thread tokens below; the composer is the workspace's Ask panel, pinned open,
+  with its own look and width (*The composer*, below). This spec wins on all five.
 - **Colour and font VALUES: neither.** The mockups carry resolved Sublime Mariana hex
   for portability; implementation MUST use the `--theme-*` / `--chip-*` tokens mapped in
   this spec, never a literal from the mockups.
@@ -28,12 +36,12 @@ Reading map (artboard → what it is normative for):
 
 | File | Normative for |
 |---|---|
-| `Main.dc.html` | the whole lens in situ: thread, rest-state turns, pending exchange, composer, host chrome |
-| `TurnRecord.dc.html` | exchange anatomy: slots, hover shell, read controls, foreign transclusion, note-host contrast |
+| `Main.dc.html` | the whole lens in situ: thread, pending exchange, composer, host chrome |
+| `TurnRecord.dc.html` | exchange anatomy: slots, foreign transclusion, note-host contrast (its shell and control strip no longer hold) |
 | `Composer.dc.html` | composer states: mention in flight, seeded quote, minted fragment, chip row, key hints |
 | `Streaming.dc.html` | arrival: pending → mint loop → whole-answer landing (what is deliberately NOT animated) |
 | `RichAnswer.dc.html` | markdown + real blocks inside an answer, readOnly affordances |
-| `RichExchange.dc.html` | rich⇄rich worst case, rest vs hovered, the three-edges rule, rejected borderless alternative |
+| `RichExchange.dc.html` | rich⇄rich worst case: the speaker surface and block chrome of a rich question and answer |
 | `Vocabulary.dc.html` | the component sheet: chip family, transclusion frames, glow/tint language, ownership legend, scale tiers |
 
 ## Problem
@@ -43,16 +51,18 @@ wire ops, but not what the lens draws. The ai-block's note-host card (badge, hea
 rule, card shell) rendered per turn produces a page of stacked documents, not a
 conversation — and gives the two speakers no visual identity.
 
-## Decision — one record, two faces
+## Decision — one exchange, two faces
 
-The exchange keeps one renderer family and gains a second, host-selected face:
+The exchange keeps one stored unit (the ai-block, its address `sieve://{chat}/{exchange}`,
+what a thread sends to a model) and has two host-selected faces:
 
 - **Note host (unchanged)**: the teal card, AI badge in the border, heading-weight
   question with the orange rule, thinking ring on the badge. Among other kinds the badge
   earns its place.
-- **Chat host (this spec)**: two moves, no badge, no shell at rest. My move sits right in
-  an orange surface; the answer sits left, open, in the column. The record shell
-  materialises on hover/focus.
+- **Chat host (this spec)**: a conversation, where the unit on screen is the MESSAGE. Each
+  exchange is two messages and nothing round them: my question at the right in an orange
+  surface, the answer at the left, open, at the column's width. Each message carries its own
+  time and its own actions.
 
 Which face renders is the host's framing decision, never the block's — the same
 one-renderer-many-hosts discipline as everywhere else.
@@ -72,21 +82,29 @@ Every colour below is a theme token; the colour words are glosses of the default
   ("orange" in Mariana) because it is already the human's accent (`--theme-cursorColor`,
   focus ring, chip default `--chip-accent`). Utterance weight — body size, no heading
   rule. The surface deliberately echoes the note-host ai-block card family.
-- **The answer**: left-set, near-full column (answers carry code and need the width).
-  **No container of its own** — it is a list, not a card: prose blocks render bare;
-  structured blocks (code, diagram, log, reference) render with their own full kind
-  chrome via the registry, `readOnly`. Asymmetric by design; not symmetric bubbles.
-- **Three edges, three claims** (the nesting rule, at most three deep):
-  `--theme-aiBlockBorder`/`--theme-aiBlockBg` ("teal") = *record* (the exchange, hover
-  only) · `--theme-accentPrimary` = *speaker* (the utterance boundary — it claims pasted
-  fragments, quotes and chips as one ask, and stays even when the question is rich) ·
-  block chrome = *kind*. A claim is never drawn twice — which is exactly why the answer,
-  already identified by position and the hover shell, gets no edge.
+- **The answer**: left-set, at the column's width (answers carry code, diagrams and
+  tables and need the width). **No bubble and no container of its own** — it is a list,
+  not a card: prose blocks render bare; structured blocks (code, diagram, log, reference)
+  render with their own full kind chrome via the registry, `readOnly`. Asymmetric by
+  design; not symmetric bubbles.
+- **Two edges, two claims**: `--theme-accentPrimary` = *speaker* (the utterance boundary —
+  it claims pasted fragments, quotes and chips as one ask, and stays even when the question
+  is rich) · block chrome = *kind*. A claim is never drawn twice, and nothing claims the
+  exchange: the answer is identified by its position, and the pair by spacing.
+- **The column**: the thread is one column, centred, its measure the **Chat width** setting
+  (Appearance, characters, 48–140, blank = 100; `LookAndFeel.ChatMeasure` →
+  `--theme-chatMeasure` → `--thread-measure`). Line width does not reach a chat; presenting,
+  the thread takes the Presentation width. The measure is computed once at `:root`, so the
+  thread is that width whatever its font. The Ask panel is not on the column: it is the
+  workspace's, and spans what it spans over any tab.
+- **Spacing carries the grouping**: a question sits close to its own answer
+  (`--thread-reply-gap`) and clearly further from the answer before it
+  (`--thread-turn-gap`, about 2rem). Nothing else encodes the grouping.
 - **Rel accents** (glossed from page C of the canvas): attach = `--theme-accentPrimary`
   · cites = `--theme-accentCyan` · pinned quote = `--theme-accentPurple` · subject =
   `--theme-accentTeal` · dangling = `--theme-muted`, dashed · LIVE/re-read tag =
-  `--theme-accentGreen`. Stamps and provenance strips: `--theme-muted` in
-  `--theme-monoFont`.
+  `--theme-accentGreen`. Provenance strips: `--theme-muted` in `--theme-monoFont`. A
+  message's time: `--theme-textDim` in the UI face, the ×0.75 tier.
 
 ### Slots
 
@@ -96,26 +114,48 @@ Every colour below is a theme token; the colour words are glosses of the default
 | handed | `attach` | chip row docked under my move, right-aligned, 15rem clamp |
 | about | `target` | **no entry** — local target glows (chain-hover language: 3px bar + tint); foreign target transcludes in place (full-anatomy readOnly render, provenance strip, `LIVE · re-read` bare / `@vN · frozen` pinned) |
 
-### The record shell (hover/focus)
+### Messages: time, days and actions
 
-At rest an exchange is two bare moves grouped by spacing. Hover **or keyboard focus**
-materialises the familiar teal ai-block shell around both moves, carrying:
+- **Each message has its own time**, always shown, under it: right-aligned under my question,
+  left-aligned under the answer. A question's is when it was asked (`createdAt`); an answer's
+  is when it was completed (`completedAt`); an answer not complete shows none. Under a minute:
+  "a few seconds ago"; one to five minutes: "N minutes ago"; older: the time of day in the
+  platform's locale. The labels move on as time passes, on the thread's own clock, without
+  redrawing a message. `ThreadTime` (`renderers/`) is the one reading of a time, given `now`.
+- **The date is said once, in the thread**: a separator before the first message of each
+  calendar day — "Today", "Yesterday", else the weekday and date, with the year when it is not
+  this year. A question and its answer may fall either side of one; a message never shows a
+  date. A chat's address takes no `?version=`: the list only grows and an exchange does not
+  change once it is answered, so there is nothing to pin.
+- **Each message has its own actions**, in the row with its time: Copy and Quote, icon buttons
+  of about 28px with a visible border, a solid surface, a hover state and a tooltip. They show
+  on pointer hover or keyboard focus of that message and stay shown on the latest answer. Copy
+  on a question copies its text; on an answer, the whole answer as markdown.
+- **Quote is per message**: it quotes the text selected inside that message when the selection
+  lies within it, otherwise its opening (about 200 characters, cut on a word boundary). The
+  lens raises the `quote` intent carrying the exchange and the quoted text, and the Ask panel
+  puts a quote into its draft, after the caret's block. A quote is a hand-over, not a
+  selection: the lens's selection stays the chat and its last exchange. A quote is a reference to the exchange (`rel: target`, unpinned) with `displayAs: quote`
+  and the quoted text in its cache: it is drawn as a blockquote in the draft and in the question
+  as asked, and the model is told it as "Specifically regarding". A draft may hold several.
+- **A block of an answer offers Copy and nothing else**, always armed: hovering or focusing the
+  block shows it, whatever the message is doing, and one click copies that block. There is no
+  Extract and no Add to Document: a chat has no document for the result to land in. The copy,
+  pasted into a note, becomes a block there.
+- **Retry** is offered on the answer of an exchange whose job failed or timed out. An answered
+  exchange does not offer it.
+- Right-click anywhere in a message resolves to the parent exchange (elements are anonymous);
+  the chat raises no menu of its own. Nothing edits or deletes an exchange: the list is
+  append-only. No Ask/Explain entries anywhere in a chat — the document is one.
 
-- the stamp in the top border: `HH:MM · @vN` — the exchange is the citable unit
-  (`sieve://{chat}/{block}?version=N`);
-- the read controls: copy · quote-into-composer (seeds the composer with a pinned
-  reference element) · expand. Read affordances only; `readOnly` removes mutation.
-- Right-click anywhere in a record resolves to the parent exchange (elements are
-  anonymous) and opens the **host** context menu: cite, branch from here, delete
-  exchange. No Ask/Explain entries anywhere in a chat — the document is one.
-
-### Arrival (aligned with #117's mechanism — no streaming theatre)
+### Arrival (no streaming theatre)
 
 - An **unanswered exchange is structural** and renders as my move plus a quiet pending
   slot in the answer position (dashed teal, pulsing dot, "answering…"). No badge ring in
   chat (the ring is note-host chrome); no partial text, no typing carets, no progressive
-  reveal — the mint tools hand blocks back to the model, which places them in its reply,
-  so **the whole answer lands as one wire event** and the lens paints once.
+  reveal inside a block. **An answer arrives a block at a time, each block whole**, as
+  the model writes it; the pending slot stays under the last block as the status row
+  until the exchange settles.
 - Citations are reference elements in the answer body and render as cyan `cites` chips
   in flow; click navigates via the Router.
 - If a true streaming backend is ever designed (LLM piping into a live block — parked,
@@ -123,13 +163,16 @@ materialises the familiar teal ai-block shell around both moves, carrying:
 
 ### The composer
 
-The full document-editor lens mounted on an in-memory draft container — the same
-instance family as notes' Ask input. Normative points:
+The composer is the workspace's Ask panel: the one panel every tab has, pinned open and not
+dismissible while a chat's tab is current, and otherwise exactly itself — its pinned look, its
+grab handle and the height the user gave it, its width. Leaving the chat's tab returns the panel
+to what the user had it. Its draft is the full document-editor lens mounted on an in-memory
+draft container, one per chat. Normative points:
 
-- **Key claims are per-mount configuration**: this mount claims `Enter` = send ahead of
-  the editor's core handling; `Alt+Enter` = newline; every other key falls through to
-  the editor. (This per-mount rule is the general precedence model — see contract deltas
-  below.)
+- **Key claims are per-mount configuration**: this mount claims `Mod+Enter` = send, the
+  composer's existing claim; `Enter` is a newline as in any editor, and every other key
+  falls through to the editor. (This per-mount rule is the general precedence model — see
+  contract deltas below.)
 - `@` opens the MentionService typeahead (workspace-wire tenant); accepting inserts the
   `@Title` token in prose AND the attach chip below — one gesture, one `rel: attach`
   reference element.
@@ -141,8 +184,14 @@ instance family as notes' Ask input. Normative points:
 
 ### Chrome the lens does NOT own
 
-Tabs (kind-tagged: MD / CHAT / WB), the Chats sidebar section (chronological,
-hypermedia), and the status bar are host chrome. The chat lens contributes no toolbar.
+Tabs (kind-tagged: MD / CHAT / WB), the Chats sidebar item, and the status bar are host
+chrome. The chat lens contributes no toolbar.
+
+The **Chats** item follows the Notebooks, Diary and Buffers items
+(`docs/how-the-sidebar-works.md`): a folder-like row directly after Diary, expanded to a
+row per chat, newest first. Right-click on the Chats row offers New Chat; right-click on
+a chat's row offers Open and Delete. New Chat is also File › New Chat, `Mod+Shift+N`:
+the variant of `Mod+N`, New Note.
 
 ## The shared vocabulary is code, not convention
 
@@ -152,13 +201,14 @@ may consume — following the two patterns already shipped there:
 
 - **Tokens at `:root`** for anything two surfaces must draw identically without
   importing each other — the `--chip-*` precedent in `editor.css` (ReferenceChip and the
-  composer draw one pill from one token set). This spec adds the speaker-surface and
-  record-shell values the same way (e.g. `--utterance-*`, `--record-*`; exact names are
-  the implementer's call, the ownership rule is not).
+  composer draw one pill from one token set). This spec adds the speaker-surface, the
+  answering side's surface and the thread's values the same way (`--utterance-*`,
+  `--record-*` for the pending slot and Retry, `--thread-*` for the column and its spacing).
 - **Components beside `QuestionListView`** — one class + sibling `.styles.js` each, no
   PM, no window.*, one narrow constructor contract:
-  - **exchange record chrome** (the two-move layout, rest/hover shell, stamp, read
-    controls) — consumed by the chat lens AND, later, the workbench conversation panel;
+  - **chat message** (`ChatMessage`: one side of an exchange, its time and its actions) —
+    consumed by the chat lens AND, later, the workbench conversation panel;
+  - **thread time** (`ThreadTime`: a message's time label and a day's, given `now`);
   - **pending slot** (dashed `aiBlockBorder` box, pulsing dot);
   - **transclusion frame** (provenance strip + LIVE/pinned tag around a composed
     readOnly renderer);
@@ -173,12 +223,11 @@ same fence `contract-purity`/`lens-isolation` tests already pin.
 `docs/editor-interaction-contract.md` gains, in the change that builds this:
 
 1. **Per-mount key claims** — a host claims keys at the mount it owns (composer mount:
-   Enter=send; workbench mount, later: Mod+Enter), resolved by focus and DOM bubbling;
+   Mod+Enter=send), resolved by focus and DOM bubbling;
    there is no global claim table.
-2. **Record hover/focus materialisation** — the shell and read controls appear on
-   pointer hover or keyboard focus; both paths are required (no pointer-only
-   affordances).
-3. **Right-click on records resolves to the parent block**; menus are host-scoped.
+2. **Message actions on hover/focus** — a message's actions appear on pointer hover or
+   keyboard focus of that message; both paths are required (no pointer-only affordances).
+3. **Right-click on a message resolves to the parent block**; menus are host-scoped.
 
 ## Non-goals
 
@@ -190,8 +239,8 @@ same fence `contract-purity`/`lens-isolation` tests already pin.
 
 - Lens-isolation and contract-purity suites cover the new lens (transport-blind, one
   provider, imports fenced).
-- Record readOnly: mutation affordances absent, read affordances live — pinned per kind
-  through the existing renderer readOnly tests, plus shell-materialisation on focus.
+- Messages readOnly: mutation affordances absent, read affordances live — pinned per kind
+  through the existing renderer readOnly tests, plus a message's actions on hover and focus.
 - A **showcase chat** joins the showcase-note convention: rich question, rich answer,
   pending exchange, quote-follow-up, foreign transclusion, dangling reference — Go
   fixture + JS fixture + app-drive target.

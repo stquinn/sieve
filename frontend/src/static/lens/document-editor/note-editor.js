@@ -316,4 +316,19 @@ export class NoteEditor extends ProseMirrorEditor {
     }
     return done
   }
+
+  /**
+   * The questions asked in this document, in document order: the question of
+   * each of its ai-blocks as its asker wrote it, without the targets `askAi`
+   * added from the selection. An ai-block whose question gives no element — an
+   * Explain — is left out.
+   * @returns {ReadonlyArray<ReadonlyArray<Readonly<import('../../renderers/question-list.js').QuestionElement>>>}
+   */
+  questionsAsked() {
+    return Object.freeze(this.provider.getOrder()
+      .map((/** @type {string} */ id) => this.provider.getBlock(id))
+      .filter((/** @type {any} */ node) => !!node && node.kind === 'ai-block')
+      .map((/** @type {any} */ node) => QuestionList.written(node.attrs && node.attrs.question))
+      .filter((/** @type {ReadonlyArray<any>} */ question) => question.length > 0))
+  }
 }

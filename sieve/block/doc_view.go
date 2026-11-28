@@ -28,7 +28,7 @@ import (
 // post-completion decisions through a DocView; if you need live state, look the
 // ShadowDocument up again.
 type DocView struct {
-	UUID string
+	ContainerAddressing
 	// rawAuthoritative mirrors ShadowDocument.rawAuthoritative at snapshot time:
 	// true means the mdModeBuffer is the document's truth (the retired Mode ==
 	// "markdown"). A DocView is a pure value, so it carries the derived boolean.
@@ -38,51 +38,37 @@ type DocView struct {
 	codec            *DocumentCodec
 }
 
-// GetBlock resolves a block by id from the snapshot tree, regardless of kind. It
-// is the SOLE accessor: "everything is a block", so lookup never discriminates on
-// kind; only context/serialisation does. Returns the block and true, or nil/false.
-func (d DocView) GetBlock(id string) (*domain.SieveBlock, bool) {
+// Block resolves a block by id, regardless of kind: "everything is a block", so
+// lookup never discriminates on kind; only context/serialisation does. It looks
+// in the snapshot tree first and then in the blocks parsed from the document's
+// markdown, which finds a structured block that only the markdown-mode buffer
+// holds. A WYSIWYG view with no codec has no markdown to derive and looks in its
+// tree alone.
+func (d DocView) Block(id string) (domain.SieveBlock, bool) {
 	if id == "" {
-		return nil, false
+		return domain.SieveBlock{}, false
 	}
 	for i := range d.Blocks {
 		if d.Blocks[i].ID == id {
-			return &d.Blocks[i], true
+			return d.Blocks[i], true
 		}
 	}
-	return nil, false
+	if d.codec == nil && !d.rawAuthoritative {
+		return domain.SieveBlock{}, false
+	}
+	return NewDocumentCodec(GlobalRegistry()).findBlockByID(d.deriveMarkdown(), id)
 }
 
-// AddressOf is the absolute address of the block id in this document:
-// sieve://{UUID}/{id}. It is the zero Address when the view names no container.
-func (d DocView) AddressOf(id string) domain.Address {
-	if d.UUID == "" {
-		return domain.Address{}
-	}
-	return domain.NewLeafAddress(d.UUID, id)
+// WholeContext is the whole document's markdown, less the blocks filter
+// rejects, as the document's AIContext (see deriveMarkdownFiltered for markdown
+// mode, where the filter cannot apply).
+func (d DocView) WholeContext(filter BlockFilter) AIContext {
+	return d.DocumentContext(d.deriveMarkdownFiltered(filter))
 }
 
-// NodeContext is the AIContext of the block id carrying content, headed by the
-// block's absolute address. A view with no container yields a context with no
-// address, hence no header.
-func (d DocView) NodeContext(id, content string) AIContext {
-	ctx := AIContext{Content: content}
-	if addr := d.AddressOf(id); addr.Container != "" {
-		ctx.Addresses = []string{addr.String()}
-	}
-	return ctx
-}
-
-// DocumentContext is the AIContext of the whole document carrying content,
-// headed by the document's own address, sieve://{UUID}. A view with no
-// container yields a context with no address, hence no header.
-func (d DocView) DocumentContext(content string) AIContext {
-	ctx := AIContext{Content: content}
-	if d.UUID != "" {
-		ctx.Addresses = []string{domain.NewContainerAddress(d.UUID).String()}
-	}
-	return ctx
-}
+// ConversationBefore answers that a document orders no conversation: no ids,
+// and false.
+func (d DocView) ConversationBefore(string) ([]string, bool) { return nil, false }
 
 // deriveMarkdown returns the whole-doc markdown a consumer needs (save, an
 // id=="doc" AI ask, block context). Mode-aware, stores nothing: in

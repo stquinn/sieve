@@ -96,12 +96,12 @@ func (r Registry) AnswerCards() []domain.AnswerCard {
 
 // BuildAnswerElement builds one answer element of contentType from the attrs a
 // model supplied, through the kind's own processor, with a fresh id, for an
-// answer held in document container ("" when it is held in none). An element
+// answer held in the open container named by container ("" when it is held in none). An element
 // born PENDING is one its kind's job is dispatched for once it lands. An unknown
 // or unoffered content type is refused with the whole catalogue; a map the kind
 // refuses, content it cannot build a block from, or a map that would build a
 // PENDING block its kind declares no job for, is refused with the kind's card.
-// Content is built from only for an answer held in a document, and what its
+// Content is built from only for an answer held in a container, and what its
 // acquisition stores there stays even when the element is then not written.
 func (r Registry) BuildAnswerElement(container, contentType string, attrs map[string]any) (domain.SieveBlock, error) {
 	kindName, isSieve := strings.CutPrefix(strings.TrimSpace(contentType), answerContentTypePrefix)

@@ -353,7 +353,7 @@ const (
 type JobContext struct {
 	Ctx    context.Context
 	UUID   string
-	Doc    DocView // immutable, lock-free snapshot of the document
+	Doc    ContainerView // immutable, lock-free snapshot of the container
 	Block  *domain.SieveBlock
 	Notify func(blockID string, attrs map[string]interface{})
 }
@@ -470,7 +470,7 @@ type BlockProcessor interface {
 	Mode() BlockMode
 	// BuildContext produces this block's contribution to AI context. seen guards
 	// against ref cycles when a block pulls in others.
-	BuildContext(block domain.SieveBlock, doc DocView, seen map[string]bool) AIContext
+	BuildContext(block domain.SieveBlock, doc ContainerView, seen map[string]bool) AIContext
 	// MarkdownRepresentation renders the block as human/AI-facing markdown (e.g. a
 	// diagram → ```mermaid …```). Distinct from Serialize, which is the on-disk form.
 	// uuid is the document context — needed by asset-bearing kinds to build a served

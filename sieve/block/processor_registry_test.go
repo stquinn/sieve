@@ -41,7 +41,7 @@ func (p *mockProcessor) Transform(entries []ContentEntry, _ string, _ string, ac
 	}
 	return nil
 }
-func (p *mockProcessor) BuildContext(_ domain.SieveBlock, _ DocView, _ map[string]bool) AIContext {
+func (p *mockProcessor) BuildContext(_ domain.SieveBlock, _ ContainerView, _ map[string]bool) AIContext {
 	return AIContext{}
 }
 func (p *mockProcessor) MarkdownRepresentation(_ domain.SieveBlock, _ string) string { return "" }

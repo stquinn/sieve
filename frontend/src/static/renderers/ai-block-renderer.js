@@ -333,7 +333,7 @@ export class AiBlockRenderer extends BlockRenderer {
     if (attrs.question === this.#drawnQuestion && attrs.attachments === this.#drawnAttachments) return
     this.#drawnQuestion = attrs.question
     this.#drawnAttachments = attrs.attachments
-    el.style.display = view.fill(el, this.#slots(attrs.question).body) ? '' : 'none'
+    el.style.display = view.fill(el, QuestionList.drawn(attrs.question, this._container)) ? '' : 'none'
     MentionTokens.mark(el, this.#attachmentsOf(attrs).map((a) => a && a.title), 'ai-block__mention')
   }
 

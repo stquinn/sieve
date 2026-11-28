@@ -1,8 +1,8 @@
 // @ts-check
 // What came of the reader's last action, said briefly: it clears itself, unless
-// it says an action is still under way. It is a line of its own (`element`), and
-// it tells `onChange` each time what it says changes, for chrome that shows it
-// elsewhere.
+// it says an action is still under way. It is a line of its own (`element`, of
+// class `action-status`), and it tells `onChange` each time what it says changes,
+// for chrome that shows it elsewhere, such as a lens's toolbar.
 
 export class ActionStatus {
   /** How long a result is shown. */
@@ -16,7 +16,7 @@ export class ActionStatus {
   constructor(onChange = () => {}) {
     this.#onChange = onChange
     this.#el = document.createElement('span')
-    this.#el.className = 'ink-page__status'
+    this.#el.className = 'action-status'
     this.#el.setAttribute('role', 'status')
     this.#el.hidden = true
   }

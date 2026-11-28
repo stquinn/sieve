@@ -275,6 +275,17 @@ func (s *AIService) RunAsk(content, history, question string, ex domain.Exchange
 	return s.run(settings, "ask", data, s.noteDir(ex.Container), ex)
 }
 
+// RunChat answers the exchange ex of a chat, given the chat so far in data. The
+// CLI runs in the library's directory, and its MCP grant is bound to ex, so the
+// model may write its answer into ex's block.
+func (s *AIService) RunChat(data ChatData, ex domain.Exchange) (Answer, error) {
+	settings := s.state.LoadSettings()
+	if settings.Tier() == domain.TierDumb {
+		return Answer{}, fmt.Errorf("chat not available in dumb mode")
+	}
+	return s.run(settings, "chat", data, s.storePath, ex)
+}
+
 // RunBtw answers a popup command's question for the exchange ex, the command's
 // own block. The document ex.Container is pointer context only (meta strings —
 // this path never touches the ShadowDoc); an empty one is the floor (no open
@@ -364,6 +375,33 @@ func (s *AIService) DescribeNote(uuid string, pages []domain.Address) (domain.No
 	if err := json.Unmarshal([]byte(s.extractJSONFallback(resp.Text)), &meta); err != nil {
 		return domain.NoteMetadata{}, fmt.Errorf("parse note description: %w", err)
 	}
+	return meta, nil
+}
+
+// DescribeChat describes the chat uuid from turns, its answered exchanges oldest
+// first, each its question and answer as the chat task's thread shows a turn. The
+// CLI runs in the library's directory, and the library's top-level folders are
+// offered as the categories to choose from. The answer is parsed and nothing else
+// is checked of it, but the CLI that ran, as the settings name it, is the description's CLI. A
+// chat with no turns is an error, and the CLI does not run.
+func (s *AIService) DescribeChat(uuid string, turns []string) (domain.NoteMetadata, error) {
+	settings := s.state.LoadSettings()
+	if settings.Tier() == domain.TierDumb {
+		return domain.NoteMetadata{}, fmt.Errorf("chat description not available in dumb mode")
+	}
+	if len(turns) == 0 {
+		return domain.NoteMetadata{}, fmt.Errorf("chat %s: no answered exchange to describe", uuid)
+	}
+	data := ChatMetaData{Turns: turns, Categories: s.libraryFolders()}
+	resp, err := s.run(settings, "chat-meta", data, s.storePath, domain.Exchange{Container: uuid})
+	if err != nil {
+		return domain.NoteMetadata{}, err
+	}
+	var meta domain.NoteMetadata
+	if err := json.Unmarshal([]byte(s.extractJSONFallback(resp.Text)), &meta); err != nil {
+		return domain.NoteMetadata{}, fmt.Errorf("parse chat description: %w", err)
+	}
+	meta.CLI = settings.CLI
 	return meta, nil
 }
 

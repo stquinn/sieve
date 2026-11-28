@@ -83,8 +83,8 @@ type MentionResolveFrame struct {
 // channel is not bound to a document; a tab closed mid-flight is a no-op.
 type SessionScrollFrame struct {
 	Type   string `json:"type"`
-	ID     string `json:"id" doc:"the tab whose offset this is"`
-	Scroll int    `json:"scroll" doc:"the pixel offset from the top"`
+	ID     string `json:"id" doc:"the tab whose position this is"`
+	Scroll int    `json:"scroll" doc:"the scroll position in its surface's own pixels: from the top of a document, up from the newest message of a chat"`
 }
 
 // SpellIgnoreFrame stops a word being flagged for the rest of this run.

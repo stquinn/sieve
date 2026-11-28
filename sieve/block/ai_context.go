@@ -14,6 +14,12 @@ type Tag struct {
 	Values []string
 }
 
+// FocusTag is the label of the Tag naming the words a block is specifically
+// about: a prose block's highlighted spans, a reference's quoted text. Every
+// kind states its focus under this one label, so a merge unions them into one
+// line.
+const FocusTag = "Specifically regarding"
+
 // AIContext is the structured AI representation of one OR MORE blocks. Addresses
 // are the absolute sieve:// addresses of the blocks it speaks for (rendered as the
 // ADDRESS header), plural because a merged context spans several nodes; Content is

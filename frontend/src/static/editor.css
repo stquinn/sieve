@@ -2146,6 +2146,12 @@ pre.tiptap-code-block code {
   background: var(--theme-accentPrimary);
 }
 
+/* In Presentation Mode a chat's thread takes the presentation measure, as a
+   note's slides do. */
+.editor-panel.presenting .chat-thread__column {
+  max-width: calc(min(var(--theme-presentationMeasure, 72ch), 100%) + 2 * var(--thread-gutter));
+}
+
 /* The composer lens mounts INTO .ask-popup__input, so the inset belongs to the
    fixture and the scroll to the editable inside it — a message longer than the
    panel scrolls, and the footer stays put. */
@@ -2290,6 +2296,41 @@ pre.tiptap-code-block code {
   --chip-accent: var(--theme-accentPrimary);
   --chip-tint-strength: 8%;
   --chip-tint-strength-hover: 18%;
+}
+
+/* ── Conversation tokens: the speaker surface, the answering side, the thread ─
+   `--utterance-*` is a person's message in a conversation, the surface a
+   question sits in; `--record-*` is the answering side's surface, the pending
+   slot and Retry; `--thread-*` is a chat's thread's column — the measure of
+   its content (the Chat width setting, `--theme-chatMeasure`, else 100ch), the
+   gutter on either side of it, the gap between one turn and the next and the
+   gap between a question and its answer. They sit at :root on the chip tokens' terms above: shared by every
+   surface that draws a message, tints as STRENGTHS mixed where they paint, and
+   no type size.
+
+   The measure is a registered length, so it is computed once, here, in the
+   root's font, and the thread's column inherits that length whatever its own
+   font is. */
+@property --thread-measure {
+  syntax: '<length>';
+  inherits: true;
+  initial-value: 0px;
+}
+
+:root {
+  --utterance-accent: var(--theme-accentPrimary);
+  --utterance-border-strength: 22%;
+  --utterance-tint-strength: 7%;
+  --utterance-rule-strength: 15%;
+  --utterance-radius: 8px;
+  --record-border-color: var(--theme-aiBlockBorder);
+  --record-background: var(--theme-aiBlockBg);
+  --record-accent: var(--theme-accentTeal);
+  --record-radius: 8px;
+  --thread-measure: var(--theme-chatMeasure, 100ch);
+  --thread-gutter: 28px;
+  --thread-turn-gap: 2rem;
+  --thread-reply-gap: 0.5rem;
 }
 
 /* ── Composer chips: attachments and target (#74) ────────────────────────────

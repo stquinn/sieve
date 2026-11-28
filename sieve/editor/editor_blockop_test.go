@@ -736,7 +736,7 @@ func TestApplyJobUpdate_NoShadow_WritesViaSpine(t *testing.T) {
 
 	// No Open → no shadow → disk-direct branch.
 	es.applyJobUpdate(uuid, abID, "ai-block",
-		map[string]interface{}{"response": "new", "status": "COMPLETE"}, nil, "test")
+		map[string]interface{}{"response": "new", "status": "COMPLETE"}, nil, true)
 
 	reloaded, err := ds.LoadByUUID(uuid)
 	if err != nil {

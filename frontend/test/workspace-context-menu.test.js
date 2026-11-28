@@ -27,7 +27,7 @@ vi.mock('../src/static/shell/tab.js', () => ({
 vi.mock('../src/static/lens/document-editor/note-editor.js', () => ({ NoteEditor: class {} }))
 vi.mock('../src/static/lens/prompt/prompt-editor.js', () => ({ PromptEditor: class {} }))
 vi.mock('../src/static/shell/ask-panel.js', () => ({
-  AskPanel: class { constructor() { this.composer = { editor: null } } },
+  AskPanel: class { constructor() { this.composer = { editor: null } } pinFor() {} },
 }))
 vi.mock('../src/static/shell/insert-dialogs.js', () => ({ InsertDialogs: class {} }))
 vi.mock('../src/static/shell/find-dialog.js', () => ({ FindDialog: class {} }))

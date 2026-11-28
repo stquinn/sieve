@@ -10,7 +10,6 @@ import (
 	"sieve/sieve/block"
 	"sieve/sieve/block/processors"
 	"sieve/sieve/domain"
-	"sieve/store"
 )
 
 // A held file whose EXTENSION says only "text" and whose CONTENT is unmistakably
@@ -22,9 +21,13 @@ const heldGo = "package main\n\nimport \"fmt\"\n\nfunc main() {\n\tfmt.Println(\
 // wired before the document it belongs to exists.
 type stubAssets struct{ files map[string][]byte }
 
-func (s stubAssets) Save(store.Category, string, string, []byte) (*domain.ImageAsset, error) {
+func (s stubAssets) Save(string, string, []byte) (*domain.ImageAsset, error) {
 	return nil, errors.New("stubAssets: writes are not part of this test")
 }
+
+func (s stubAssets) OwnedKeys(string) ([]string, error) { return nil, nil }
+
+func (s stubAssets) PageAssetAddress(string, string) string { return "" }
 
 func (s stubAssets) ServeAssetData(_, filename string) ([]byte, error) {
 	if b, ok := s.files[filename]; ok {

@@ -34,6 +34,9 @@ import (
 // SieveBlock.SetElements — nothing reaches into the attr and casts.
 type Elements []SieveBlock
 
+// QuestionAttr is the attrs-bag key an ai-block's question elements live under.
+const QuestionAttr = "question"
+
 // elementKindKey and elementAttrsKey are the two keys of the encoding.
 const (
 	elementKindKey  = "kind"

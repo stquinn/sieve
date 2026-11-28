@@ -361,45 +361,45 @@ func (s *Server) fetchPage(ctx context.Context, _ *mcpsdk.CallToolRequest, in Fe
 	if rawURL == "" {
 		return nil, NodeContent{}, fmt.Errorf("cannot retrieve: empty URL")
 	}
-	if s.documents == nil || s.nodes == nil {
+	if s.assets == nil || s.nodes == nil {
 		return nil, NodeContent{}, fmt.Errorf("cannot retrieve: document store is not wired")
 	}
-	doc, err := s.documents.LoadByUUID(docUUID)
-	if err != nil {
-		return nil, NodeContent{}, fmt.Errorf("cannot retrieve: document %q not found: %w", docUUID, err)
+
+	if _, err := s.assets.OwnedKeys(docUUID); err != nil {
+		return nil, NodeContent{}, fmt.Errorf("cannot retrieve: nothing here keeps a page for this run: %w", err)
 	}
 
-	key := s.documents.PageAssetKey(rawURL)
-	addr := domain.NewLeafAddress(doc.UUID(), key)
+	key := s.assets.PageAssetKey(rawURL)
+	addr := domain.NewLeafAddress(docUUID, key)
 
-	for _, owned := range doc.Storable().Owns() {
-		if owned.Key() == key {
-			node, err := s.nodes.Resolve(addr)
-			if err != nil {
-				return nil, NodeContent{}, fmt.Errorf("cannot retrieve: %w", err)
-			}
-			title := s.htmlTitle(owned.Body())
-			if title == "" {
-				title = node.Title
-			}
-			return nil, NodeContent{
-				URI:     node.URI,
-				Kind:    node.Kind,
-				Title:   title,
-				Summary: node.Summary,
-				Body:    node.Body,
-				Path:    node.Path,
-				Bytes:   node.Bytes,
-			}, nil
+	if s.assets.PageAssetAddress(docUUID, rawURL) != "" {
+		node, err := s.nodes.Resolve(addr)
+		if err != nil {
+			return nil, NodeContent{}, fmt.Errorf("cannot retrieve: %w", err)
 		}
+		title := node.Title
+		if kept, err := s.assets.ServeAssetData(docUUID, key); err == nil {
+			if t := s.htmlTitle(kept); t != "" {
+				title = t
+			}
+		}
+		return nil, NodeContent{
+			URI:     node.URI,
+			Kind:    node.Kind,
+			Title:   title,
+			Summary: node.Summary,
+			Body:    node.Body,
+			Path:    node.Path,
+			Bytes:   node.Bytes,
+		}, nil
 	}
 
 	page, err := s.linkPreview.FetchReadable(rawURL, s.fetchTimeout)
 	if err != nil {
-		logger.Warn("sieve mcp: fetch_page refused", "url", rawURL, "doc", doc.UUID(), "err", err)
+		logger.Warn("sieve mcp: fetch_page refused", "url", rawURL, "doc", docUUID, "err", err)
 		return nil, NodeContent{}, fmt.Errorf("cannot retrieve: %w", err)
 	}
-	if _, err := s.documents.SaveAsset(doc, key, []byte(page.HTML)); err != nil {
+	if _, err := s.assets.Save(docUUID, key, []byte(page.HTML)); err != nil {
 		return nil, NodeContent{}, fmt.Errorf("cannot retrieve: save asset: %w", err)
 	}
 	node, err := s.nodes.Resolve(addr)
@@ -410,7 +410,7 @@ func (s *Server) fetchPage(ctx context.Context, _ *mcpsdk.CallToolRequest, in Fe
 	if title == "" {
 		title = node.Title
 	}
-	logger.Info("sieve mcp: fetch_page", "url", rawURL, "doc", doc.UUID(), "asset", key, "bytes", node.Bytes)
+	logger.Info("sieve mcp: fetch_page", "url", rawURL, "doc", docUUID, "asset", key, "bytes", node.Bytes)
 	return nil, NodeContent{
 		URI:     node.URI,
 		Kind:    node.Kind,
@@ -475,7 +475,7 @@ func (s *Server) admitted(ex domain.Exchange, holding domain.AnswerHolding, in A
 	if err := holding.Admit(card, card.WaitsAlways, available); err != nil {
 		return domain.SieveBlock{}, err
 	}
-	el, err := s.vocabulary.BuildAnswerElement(ex.AnswerDocument(), in.ContentType, in.Attrs)
+	el, err := s.vocabulary.BuildAnswerElement(ex.AnswerContainer(), in.ContentType, in.Attrs)
 	if err != nil {
 		return domain.SieveBlock{}, err
 	}

@@ -34,7 +34,7 @@ export class ContainerModelFeed {
    * second open answers the model already following, because two models for one
    * container is two answers to the same read.
    * @param {string} uuid
-   * @param {string} [kind] the container's kind as a DATA word ('note' today)
+   * @param {string} [kind] the container's kind as a DATA word, the noun the server states ('note', 'chat', a block's kind, …)
    * @returns {ContainerModel}
    */
   open(uuid, kind) {

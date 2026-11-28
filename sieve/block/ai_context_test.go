@@ -97,14 +97,15 @@ func TestAIContext_String_taglessBlock(t *testing.T) {
 
 // A context built with no container to address against has no header, and the
 // block's bare id is never printed in its place. The whole document is headed
-// by the container's own address.
+// by the container's own address. A document orders no conversation before any
+// block.
 func TestDocView_Contexts_addressTheirNodeOrPrintNoHeader(t *testing.T) {
 	cases := []struct {
 		name            string
 		doc             DocView
 		want, wantWhole string
 	}{
-		{"a container", DocView{UUID: addrDoc}, "ADDRESS: " + addr("pr-1") + "\nalpha", "ADDRESS: sieve://" + addrDoc + "\nalpha"},
+		{"a container", DocView{ContainerAddressing: ContainerAddressing{UUID: addrDoc}}, "ADDRESS: " + addr("pr-1") + "\nalpha", "ADDRESS: sieve://" + addrDoc + "\nalpha"},
 		{"no container", DocView{}, "alpha", "alpha"},
 	}
 	for _, tc := range cases {
@@ -114,6 +115,9 @@ func TestDocView_Contexts_addressTheirNodeOrPrintNoHeader(t *testing.T) {
 			}
 			if got := tc.doc.DocumentContext("alpha").String(); got != tc.wantWhole {
 				t.Errorf("DocumentContext String() = %q, want %q", got, tc.wantWhole)
+			}
+			if earlier, conversation := tc.doc.ConversationBefore("pr-1"); earlier != nil || conversation {
+				t.Errorf("ConversationBefore = %v, %v; a document orders no conversation", earlier, conversation)
 			}
 		})
 	}

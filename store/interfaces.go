@@ -1,11 +1,12 @@
 package store
 
 // The .meta type values. A type is what a directory in the store holds; it says
-// nothing about where that directory lives. TypeDocument and TypeBlock carry a
-// content file, TypeFolder does not.
+// nothing about where that directory lives. TypeDocument, TypeBlock and TypeChat
+// carry a content file, TypeFolder does not.
 const (
 	TypeDocument = "document"
 	TypeBlock    = "block"
+	TypeChat     = "chat"
 	TypeFolder   = "folder"
 )
 

@@ -7,7 +7,7 @@
 // string) and optional active()/enabled() closures. A ToolbarLabel is text that
 // is not a button. A ToolbarSeparator divides two sections. A ButtonGroup is a
 // `.tb-group` of widgets with a refresh() fanout. A ToolbarSelect is a
-// drop-down of choices. Icons arrive pre-resolved as
+// drop-down of choices. A ToolbarField is a line of text the reader types. Icons arrive pre-resolved as
 // `iconHtml`, which keeps every widget content-blind.
 
 /**
@@ -202,6 +202,58 @@ export class ToolbarSelect {
     const chosen = this.#select.options[this.#select.selectedIndex]
     const text = this.#faceText ? this.#faceText() : chosen ? String(chosen.textContent) : ''
     if (this.#face.textContent !== text) this.#face.textContent = text
+  }
+}
+
+/**
+ * @typedef {object} ToolbarFieldSpec
+ * @property {string} [id] the input's DOM id
+ * @property {string} label its accessible name and tooltip
+ * @property {string} [placeholder]
+ * @property {string} [value] what it holds when it is made
+ * @property {string} [className] extra class(es) beyond `tb-field`
+ * @property {(value: string) => void} onCommit told what it holds when Enter is pressed in it
+ * @property {() => void} onCancel told when Escape is pressed in it
+ */
+
+/**
+ * A line of text the reader types into: a native `<input>`. It takes the
+ * keyboard the first time it is refreshed while in the page, with its text
+ * selected, and keeps Enter and Escape to itself.
+ */
+export class ToolbarField {
+  /** @type {HTMLInputElement} */ #el
+  /** @type {boolean} */ #focused = false
+
+  /** @param {ToolbarFieldSpec} spec */
+  constructor({ id, label, placeholder, value, className, onCommit, onCancel }) {
+    const input = document.createElement('input')
+    input.type = 'text'
+    input.className = className ? 'tb-field ' + className : 'tb-field'
+    if (id) input.id = id
+    input.title = label
+    input.setAttribute('aria-label', label)
+    if (placeholder) input.placeholder = placeholder
+    input.value = value || ''
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); onCommit(input.value) }
+      else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); onCancel() }
+    })
+    this.#el = input
+  }
+
+  /** @returns {HTMLInputElement} */
+  get el() { return this.#el }
+
+  /** @returns {string} what it holds now */
+  get value() { return this.#el.value }
+
+  /** Takes the keyboard, its text selected, the first time it is in the page. */
+  refresh() {
+    if (this.#focused || !this.#el.isConnected) return
+    this.#focused = true
+    this.#el.focus()
+    this.#el.select()
   }
 }
 

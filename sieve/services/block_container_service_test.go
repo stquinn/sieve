@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -50,7 +51,7 @@ func (stickyProc) Transform([]block.ContentEntry, string, string, block.Action) 
 func (stickyProc) DescribeJob(block.JobContext) *block.ProcessorJob { return nil }
 func (stickyProc) OnChange(*domain.SieveBlock)                      {}
 func (stickyProc) Mode() block.BlockMode                            { return block.BlockModeBlock }
-func (stickyProc) BuildContext(domain.SieveBlock, block.DocView, map[string]bool) block.AIContext {
+func (stickyProc) BuildContext(domain.SieveBlock, block.ContainerView, map[string]bool) block.AIContext {
 	return block.AIContext{}
 }
 func (stickyProc) MarkdownRepresentation(b domain.SieveBlock, _ string) string {
@@ -540,4 +541,108 @@ func TestBlockContainer_MovedToTheLibraryIsStillABlock(t *testing.T) {
 	if loaded.Block().StringAttr("title") != "moved" {
 		t.Errorf("loaded = %+v", loaded.Block())
 	}
+}
+
+// An asset is kept for its owner named by uuid, in whatever category holds the
+// owner, and every reader of the store then sees it owned and addressed, without
+// the owner's version moving.
+func TestAssetService_KeepsAFileForAnOwnerNamedByUUID(t *testing.T) {
+	containers, st := newTestContainers(t)
+	documents, err := services.NewDocumentService(st)
+	if err != nil {
+		t.Fatalf("NewDocumentService: %v", err)
+	}
+	assets := services.NewAssetService(st, "")
+
+	newBuffer := func(t *testing.T) domain.Document {
+		d, err := documents.New()
+		if err != nil {
+			t.Fatalf("New: %v", err)
+		}
+		if d, err = documents.Save(d); err != nil {
+			t.Fatalf("Save: %v", err)
+		}
+		return d
+	}
+	documentVersion := func(t *testing.T, uuid string) int {
+		d, err := documents.LoadByUUID(uuid)
+		if err != nil {
+			t.Fatalf("LoadByUUID: %v", err)
+		}
+		return d.Meta().Version()
+	}
+	owners := []struct {
+		name    string
+		make    func(t *testing.T) string
+		version func(t *testing.T, uuid string) int
+	}{
+		{"a buffer", func(t *testing.T) string { return newBuffer(t).UUID() }, documentVersion},
+		{"a note", func(t *testing.T) string {
+			d, err := documents.File(newBuffer(t))
+			if err != nil {
+				t.Fatalf("File: %v", err)
+			}
+			return d.UUID()
+		}, documentVersion},
+		{"a block container", func(t *testing.T) string {
+			c, err := containers.Create(stickyKind, map[string]interface{}{"title": "x"})
+			if err != nil {
+				t.Fatalf("Create: %v", err)
+			}
+			return c.UUID()
+		}, func(t *testing.T, uuid string) int {
+			c, err := containers.Load(uuid)
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			return c.Version()
+		}},
+	}
+	for _, o := range owners {
+		t.Run(o.name, func(t *testing.T) {
+			uuid := o.make(t)
+			before := o.version(t, uuid)
+			pageURL := "https://example.com/news/story"
+			pageKey := assets.PageAssetKey(pageURL)
+			if got := assets.PageAssetAddress(uuid, pageURL); got != "" {
+				t.Fatalf("page address before the page is kept = %q, want none", got)
+			}
+
+			saved, err := assets.Save(uuid, pageKey, []byte("<html></html>"))
+			if err != nil {
+				t.Fatalf("Save: %v", err)
+			}
+			if saved.Storable().Key() != pageKey {
+				t.Errorf("saved key = %q, want %q", saved.Storable().Key(), pageKey)
+			}
+			keys, err := assets.OwnedKeys(uuid)
+			if err != nil || !slices.Contains(keys, pageKey) {
+				t.Errorf("OwnedKeys = %v, %v, want %q listed", keys, err, pageKey)
+			}
+			if want := domain.NewLeafAddress(uuid, pageKey).String(); assets.PageAssetAddress(uuid, pageURL) != want {
+				t.Errorf("PageAssetAddress = %q, want %q", assets.PageAssetAddress(uuid, pageURL), want)
+			}
+			if body, err := assets.ServeAssetData(uuid, pageKey); err != nil || string(body) != "<html></html>" {
+				t.Errorf("ServeAssetData = %q, %v", body, err)
+			}
+			if after := o.version(t, uuid); after != before {
+				t.Errorf("owner version moved %d -> %d", before, after)
+			}
+			if err := assets.Delete(uuid, pageKey); err != nil {
+				t.Fatalf("Delete: %v", err)
+			}
+			if body, err := assets.ServeAssetData(uuid, pageKey); err == nil {
+				t.Errorf("ServeAssetData after Delete = %q, want an error", body)
+			}
+		})
+	}
+
+	t.Run("an unknown owner keeps nothing", func(t *testing.T) {
+		if _, err := assets.Save(missingUUID, "a.png", []byte("x")); err == nil {
+			t.Error("Save for an unknown owner succeeded")
+		}
+		if _, err := assets.OwnedKeys(missingUUID); err == nil {
+			t.Error("OwnedKeys for an unknown owner succeeded")
+		}
+	})
 }

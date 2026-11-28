@@ -91,8 +91,10 @@ export class ComposerAttachments {
    *  live in (null → model-only: the chip verbs still work, and nothing attaches) */ #draft = null
 
   /**
-   * @param {HTMLElement|null} footerEl the structural `.ask-popup__footer`. The
-   *   row is CREATED here and inserted before Send, which stays the last child.
+   * @param {HTMLElement|null} footerEl where the row is drawn: the structural
+   *   `.ask-popup__footer`, or a host of the row's own. The row is CREATED here
+   *   and inserted before a Send among the host's children, which stays the last
+   *   child, or appended to a host holding none.
    * @param {ComposerDraft|null} [draft] the message being written. Both halves of
    *   an attachment live in it, so every verb reaches through it.
    */

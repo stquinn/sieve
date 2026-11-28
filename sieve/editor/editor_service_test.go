@@ -17,6 +17,7 @@ import (
 	"sieve/sieve/block/processors"
 	"sieve/sieve/domain"
 	"sieve/sieve/services"
+	"sieve/store"
 	"sieve/store/filestore"
 	"strconv"
 	"strings"
@@ -319,9 +320,56 @@ type savedFact struct {
 // recordingSaves is a ContainerSavedNotifier that hands each announcement to
 // whoever is waiting. Buffered, because a save fires from the debounce timer's
 // own goroutine and must never block on a reader.
-type recordingSaves struct{ facts chan savedFact }
+// It is also a ChatListener and a ChatAnsweredListener, keeping what it heard in
+// order.
+type recordingSaves struct {
+	facts    chan savedFact
+	mu       sync.Mutex
+	named    []string
+	asked    []string
+	answered []string
+}
 
 func newRecordingSaves() *recordingSaves { return &recordingSaves{facts: make(chan savedFact, 8)} }
+
+func (r *recordingSaves) ChatNamed(uuid, name string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.named = append(r.named, uuid+" "+name)
+}
+
+func (r *recordingSaves) ChatAsked(uuid string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.asked = append(r.asked, uuid)
+}
+
+func (r *recordingSaves) ChatAnswered(uuid string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.answered = append(r.answered, uuid)
+}
+
+// answers is what ChatAnswered has heard so far, in order.
+func (r *recordingSaves) answers() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.answered...)
+}
+
+// asks is what ChatAsked has heard so far, in order.
+func (r *recordingSaves) asks() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.asked...)
+}
+
+// namings is what ChatNamed has heard so far, as "uuid name" in order.
+func (r *recordingSaves) namings() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.named...)
+}
 
 func (r *recordingSaves) ContainerSaved(uuid string, version int) {
 	r.facts <- savedFact{uuid: uuid, version: version}
@@ -816,7 +864,7 @@ func TestEditorService_HandlePaste_wholeBlockCopyPerKind(t *testing.T) {
 					"holiday.png": pngBuf.Bytes(), "plan.txt": []byte("Quarterly plan\nsecond line\n"),
 					"diagram-diag-src-1.svg": []byte(`<svg xmlns="http://www.w3.org/2000/svg"/>`),
 				} {
-					if _, err := svc.Assets.Save(domain.WorkingCopy, src, key, body); err != nil {
+					if _, err := svc.Assets.Save(src, key, body); err != nil {
 						t.Fatalf("seed %s: %v", key, err)
 					}
 				}
@@ -883,7 +931,7 @@ func TestEditorService_NewDocument_HoldsACopyOfTheBlocks(t *testing.T) {
 		block.RegisterProcessor(p)
 	}
 	for key, body := range map[string][]byte{"holiday.png": pngBuf.Bytes(), "drawn.svg": []byte("<svg/>")} {
-		if _, err := svc.Assets.Save(domain.WorkingCopy, src, key, body); err != nil {
+		if _, err := svc.Assets.Save(src, key, body); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -1057,7 +1105,7 @@ func TestEditorService_placementSharesWherePasteCopies(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			es, uuid := newDropEditor(t)
 			block.RegisterProcessor(processors.NewSmartImageProcessor(es.services))
-			if _, err := es.services.Assets.Save(domain.WorkingCopy, uuid, tc.asset.key, tc.asset.body); err != nil {
+			if _, err := es.services.Assets.Save(uuid, tc.asset.key, tc.asset.body); err != nil {
 				t.Fatalf("seed asset: %v", err)
 			}
 			src := "sieve://" + uuid + "/" + tc.asset.key
@@ -1323,7 +1371,7 @@ func (p *testRunJobProcessor) IsSupportedContent(entries []block.ContentEntry) b
 func (p *testRunJobProcessor) Transform(entries []block.ContentEntry, _ string, _ string, action block.Action) map[string]interface{} {
 	return nil
 }
-func (p *testRunJobProcessor) BuildContext(_ domain.SieveBlock, _ block.DocView, _ map[string]bool) block.AIContext {
+func (p *testRunJobProcessor) BuildContext(_ domain.SieveBlock, _ block.ContainerView, _ map[string]bool) block.AIContext {
 	return block.AIContext{}
 }
 func (p *testRunJobProcessor) MarkdownRepresentation(_ domain.SieveBlock, _ string) string {
@@ -1550,11 +1598,103 @@ func (c cannedCLI) Run(_ ai.Run, _ ai.ResponseNote) (string, error) {
 	return string(c), nil
 }
 
+// drawnSVG is a PlantUML renderer drawing every source as one empty SVG.
+type drawnSVG struct{}
+
+func (drawnSVG) Render(string) ([]byte, error) {
+	return []byte(`<svg xmlns="http://www.w3.org/2000/svg"/>`), nil
+}
+
+// answerHost is a container an answer is written into, holding one exchange
+// being answered: a note, and a chat.
+type answerHost struct {
+	name string
+	// open stores the container with its exchange, opens it, and answers both
+	// uuids.
+	open func(t *testing.T, es *EditorService, ds *services.DocumentService, chats *services.ChatService) (uuid, host string)
+	// stored is what the store holds for the container: its content file, and
+	// the keys of the files it keeps.
+	stored func(t *testing.T, ds *services.DocumentService, chats *services.ChatService, uuid string) (string, []string)
+	// top is how many top-level blocks the container holds.
+	top int
+}
+
+// answerHosts are the containers an answer held in an open container lives in.
+var answerHosts = []answerHost{
+	{
+		name: "in a note",
+		open: func(t *testing.T, es *EditorService, ds *services.DocumentService, _ *services.ChatService) (string, string) {
+			doc, _ := ds.New()
+			doc.SetBody([]byte("# Test"))
+			doc, _ = ds.Save(doc)
+			if err := es.Open(doc.UUID()); err != nil {
+				t.Fatalf("Open: %v", err)
+			}
+			block.RegisterProcessor(answeringHost{&testRunJobProcessor{FencedDeserializer: block.FencedDeserializer{Kind: "mock-ask"}}})
+			host, _, err := es.CreateBlock(doc.UUID(), "mock-ask", map[string]interface{}{"status": block.BlockStatusDispatched}, -1)
+			if err != nil {
+				t.Fatalf("CreateBlock: %v", err)
+			}
+			return doc.UUID(), host
+		},
+		stored: func(t *testing.T, ds *services.DocumentService, _ *services.ChatService, uuid string) (string, []string) {
+			doc, err := ds.LoadByUUID(uuid)
+			if err != nil {
+				t.Fatalf("LoadByUUID: %v", err)
+			}
+			return string(doc.Body()), ownedKeys(doc.Storable().Owns())
+		},
+		top: 2,
+	},
+	{
+		name: "in a chat",
+		open: func(t *testing.T, es *EditorService, _ *services.DocumentService, chats *services.ChatService) (string, string) {
+			block.RegisterProcessor(processors.NewAIBlockProcessor(block.BlockServices{}))
+			exchange := answeredExchange("Draw it.", "")
+			exchange.SetElements(block.AnswerAttr, nil)
+			exchange.Attrs["status"] = block.BlockStatusDispatched
+			exchange.Attrs["createdAt"] = time.Now().UTC().Format(time.RFC3339)
+			c, err := chats.Create("")
+			if err != nil {
+				t.Fatalf("Create: %v", err)
+			}
+			c.SetExchanges([]domain.SieveBlock{exchange})
+			if c, err = chats.Save(c); err != nil {
+				t.Fatalf("Save: %v", err)
+			}
+			if err := es.Open(c.UUID()); err != nil {
+				t.Fatalf("Open: %v", err)
+			}
+			return c.UUID(), exchange.ID
+		},
+		stored: func(t *testing.T, _ *services.DocumentService, chats *services.ChatService, uuid string) (string, []string) {
+			c, err := chats.Load(uuid)
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			return string(c.Storable().Body()), ownedKeys(c.Assets())
+		},
+		top: 1,
+	},
+}
+
+// ownedKeys are the keys of the files a container keeps.
+func ownedKeys(owned []store.Storable) []string {
+	keys := make([]string, len(owned))
+	for i, o := range owned {
+		keys[i] = o.Key()
+	}
+	return keys
+}
+
 // An element born PENDING gets its kind's job from the engine as any block
-// does: dispatched when it lands, its result merged into THAT element inside
-// its parent, the parent told to the client, and the result saved. A stale
-// DISPATCHED element is reset for its job to run again, as a block is. Each
-// kind an answer offers waiting on a job has a row, its job's backend stubbed.
+// does, in a note and in a chat alike: dispatched when it lands, its result
+// merged into THAT element inside its parent, the parent told to the client, and
+// the result saved; a file its kind keeps is kept in the container's own folder
+// and held by the host, open or closed.
+// A stale DISPATCHED element is reset for its job to run again, as a block is.
+// Each kind an answer offers waiting on a job has a row, its job's backend
+// stubbed.
 func TestEditorService_AppendToAnswer_AnElementsJobLandsInTheElement(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
@@ -1562,6 +1702,7 @@ func TestEditorService_AppendToAnswer_AnElementsJobLandsInTheElement(t *testing.
 		element  func(t *testing.T, uuid string) domain.SieveBlock
 		landed   map[string]string // attr → what the job left in the element
 		saved    string
+		file     string // the attr naming the file the element keeps, when it keeps one
 	}{
 		{
 			name: "a kind of the test's own",
@@ -1601,7 +1742,7 @@ func TestEditorService_AppendToAnswer_AnElementsJobLandsInTheElement(t *testing.
 				}
 				aiSvc := ai.NewAIService(state, prompts, ds, nil, t.TempDir())
 				aiSvc.SetRunner(cannedCLI("# Go 1.22 is released\n\nLoop variables are per-iteration."))
-				block.RegisterProcessor(processors.NewWebClipBlockProcessor(block.BlockServices{AI: aiSvc, Documents: ds, State: state}))
+				block.RegisterProcessor(processors.NewWebClipBlockProcessor(block.BlockServices{AI: aiSvc, Documents: ds, Assets: services.NewAssetService(fs, ""), State: state}))
 			},
 			element: func(t *testing.T, uuid string) domain.SieveBlock {
 				el, err := block.GlobalRegistry().BuildAnswerElement(uuid, "sieve/web-clip", map[string]any{"source": "https://go.dev/blog/go1.22"})
@@ -1633,68 +1774,115 @@ func TestEditorService_AppendToAnswer_AnElementsJobLandsInTheElement(t *testing.
 			},
 			landed: map[string]string{"summary": "A bar chart of pool use.", "alt": "bar chart", "width": "4"},
 			saved:  "A bar chart of pool use.",
+			file:   "src",
+		},
+		{
+			name: "a PlantUML diagram, drawn by a stand-in for PlantUML",
+			register: func(t *testing.T, _ *services.DocumentService, fs *filestore.FileStore) {
+				block.RegisterProcessor(processors.NewDiagramProcessor(block.BlockServices{Assets: services.NewAssetService(fs, ""), Plantuml: drawnSVG{}}))
+			},
+			element: func(t *testing.T, uuid string) domain.SieveBlock {
+				el, err := block.GlobalRegistry().BuildAnswerElement(uuid, "sieve/diagram", map[string]any{"source": "A -> B", "diagramType": "plantuml"})
+				if err != nil {
+					t.Fatalf("build: %v", err)
+				}
+				return el
+			},
+			landed: map[string]string{"source": "A -> B", "error": ""},
+			saved:  "svgAsset: sieve://",
+			file:   "svgAsset",
 		},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
-			resetRegistry()
-			t.Cleanup(resetRegistry)
-			ds, fs := newTestDocumentService(t)
-			es := NewEditorService(ds, block.NewDocumentCodec(block.GlobalRegistry()), 0)
-			doc, _ := ds.New()
-			doc.SetBody([]byte("# Test"))
-			doc, _ = ds.Save(doc)
-			uuid := doc.UUID()
-			_ = es.Open(uuid)
+		for _, holder := range answerHosts {
+			t.Run(tc.name+" "+holder.name, func(t *testing.T) {
+				resetRegistry()
+				t.Cleanup(resetRegistry)
+				chats, _, ds, fs := newTestChats(t)
+				es := NewEditorService(ds, block.NewDocumentCodec(block.GlobalRegistry()), 0)
+				es.SetChats(chats)
+				t.Cleanup(es.CloseAll)
+				uuid, host := holder.open(t, es, ds, chats)
 
-			var told []string
-			es.SetLifecycleListener(&mockLifecycleListener{onUpdated: func(_, id string, _ map[string]interface{}) { told = append(told, id) }})
-			block.RegisterProcessor(answeringHost{&testRunJobProcessor{FencedDeserializer: block.FencedDeserializer{Kind: "mock-ask"}}})
-			tc.register(t, ds, fs)
-			host, _, err := es.CreateBlock(uuid, "mock-ask", map[string]interface{}{"status": block.BlockStatusDispatched}, -1)
-			if err != nil {
-				t.Fatalf("CreateBlock: %v", err)
-			}
-			el := tc.element(t, uuid)
-			told = nil
-			if err := es.AppendToAnswer(domain.Exchange{Container: uuid, Block: host}, el, true); err != nil {
-				t.Fatalf("AppendToAnswer: %v", err)
-			}
-			es.WaitForJobs()
-
-			blk, _ := es.shadowFor(uuid).SnapshotBlock(host)
-			answer := blk.Elements(block.AnswerAttr)
-			if len(answer) != 1 || answer[0].ID != el.ID || answer[0].Status() != block.BlockStatusComplete {
-				t.Fatalf("answer = %+v, want the one element, settled by its job", answer)
-			}
-			for k, want := range tc.landed {
-				if got := answer[0].StringAttr(k); got != want {
-					t.Errorf("element %s = %q, want %q", k, got, want)
+				var told []string
+				var toldMu sync.Mutex
+				es.SetLifecycleListener(&mockLifecycleListener{onUpdated: func(_, id string, _ map[string]interface{}) {
+					toldMu.Lock()
+					defer toldMu.Unlock()
+					told = append(told, id)
+				}})
+				tc.register(t, ds, fs)
+				el := tc.element(t, uuid)
+				if err := es.AppendToAnswer(domain.Exchange{Container: uuid, Block: host}, el, true); err != nil {
+					t.Fatalf("AppendToAnswer: %v", err)
 				}
-			}
-			if top := es.shadowFor(uuid).SnapshotBlocks(); len(top) != 2 {
-				t.Errorf("the document holds %d blocks, want the heading and the host alone", len(top))
-			}
-			for _, id := range told {
-				if id != host {
-					t.Errorf("the client was told of %q, want only the host %q", id, host)
-				}
-			}
-			if len(told) < 2 {
-				t.Errorf("the client was told %d times, want the append, the dispatch and the result", len(told))
-			}
-			if err := es.Flush(uuid); err != nil {
-				t.Fatalf("Flush: %v", err)
-			}
-			if saved, _ := ds.LoadByUUID(uuid); !strings.Contains(string(saved.Body()), tc.saved) {
-				t.Errorf("the element's job result was not saved:\n%s", saved.Body())
-			}
+				es.WaitForJobs()
 
-			shadow := es.shadowFor(uuid)
-			shadow.PatchBlock(domain.SieveBlock{ID: el.ID, Attrs: map[string]interface{}{"status": block.BlockStatusDispatched, "createdAt": ""}})
-			if stuck := shadow.ResetStuckDispatched(time.Minute); fmt.Sprint(stuck) != fmt.Sprint([]string{host, el.ID}) {
-				t.Errorf("stuck = %v, want the stale host and its stale element", stuck)
-			}
-		})
+				blocks, err := es.Blocks(uuid)
+				if err != nil {
+					t.Fatalf("Blocks: %v", err)
+				}
+				var answer []*domain.SieveBlock
+				for _, b := range blocks {
+					if b.ID == host {
+						answer = b.Elements(block.AnswerAttr)
+					}
+				}
+				if len(answer) != 1 || answer[0].ID != el.ID || answer[0].Status() != block.BlockStatusComplete {
+					t.Fatalf("answer = %+v, want the one element, settled by its job", answer)
+				}
+				for k, want := range tc.landed {
+					if got := answer[0].StringAttr(k); got != want {
+						t.Errorf("element %s = %q, want %q", k, got, want)
+					}
+				}
+				if len(blocks) != holder.top {
+					t.Errorf("the container holds %d blocks, want %d", len(blocks), holder.top)
+				}
+				toldMu.Lock()
+				for _, id := range told {
+					if id != host {
+						t.Errorf("the client was told of %q, want only the host %q", id, host)
+					}
+				}
+				if len(told) < 2 {
+					t.Errorf("the client was told %d times, want the append, the dispatch and the result", len(told))
+				}
+				toldMu.Unlock()
+				body, kept := holder.stored(t, ds, chats, uuid)
+				if !strings.Contains(body, tc.saved) {
+					t.Errorf("the element's job result was not saved:\n%s", body)
+				}
+				if tc.file != "" {
+					addr, err := domain.ParseAddress(answer[0].StringAttr(tc.file))
+					if err != nil || addr.Container != uuid || !strings.Contains(strings.Join(kept, " "), addr.Leaf) {
+						t.Errorf("%s = %q, want a file the container keeps (it keeps %v)", tc.file, answer[0].StringAttr(tc.file), kept)
+					}
+				}
+
+				_, jobs, err := es.jobsOf(uuid)
+				if err != nil {
+					t.Fatalf("jobsOf: %v", err)
+				}
+				jobs.PatchBlock(domain.SieveBlock{ID: host, Attrs: map[string]interface{}{"createdAt": ""}})
+				jobs.PatchBlock(domain.SieveBlock{ID: el.ID, Attrs: map[string]interface{}{"status": block.BlockStatusDispatched, "createdAt": ""}})
+				if stuck := jobs.ResetStuckDispatched(time.Minute); fmt.Sprint(stuck) != fmt.Sprint([]string{host, el.ID}) {
+					t.Errorf("stuck = %v, want the stale host and its stale element", stuck)
+				}
+
+				if tc.file == "" {
+					return
+				}
+				addr, _ := domain.ParseAddress(answer[0].StringAttr(tc.file))
+				for _, state := range []string{"open", "closed"} {
+					if state == "closed" {
+						es.Close(uuid)
+					}
+					if holding, held, err := es.AssetHolder(uuid, addr.Leaf); err != nil || !held || holding != host {
+						t.Errorf("%s: AssetHolder = %q, %v, %v; want the host", state, holding, held, err)
+					}
+				}
+			})
+		}
 	}
 }
 
@@ -1809,8 +1997,8 @@ func TestApplyJobUpdate_closedDoc(t *testing.T) {
 	// Apply a job update to the closed document.
 	es.applyJobUpdate(uuid, closedID, "code",
 		map[string]interface{}{"status": block.BlockStatusComplete, "source": "new source"},
-		nil, // no deletes
-		"",  // no explicit flush reason; Close will flush
+		nil,  // no deletes
+		true, // the job settles
 	)
 
 	// Shadow must be gone after the transient open+close.

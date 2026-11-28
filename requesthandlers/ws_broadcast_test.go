@@ -37,6 +37,27 @@ func TestWorkspaceBroadcast_ReachesEveryWorkspaceSocketOnly(t *testing.T) {
 	expectNoMessage(t, doc, protocol.TypeInvalidate, 300*time.Millisecond)
 }
 
+// A chat saved under another name raises the chats topic and the session's, the two views that
+// show the name.
+func TestWorkspaceBroadcast_AChatNamedRaisesTheChatsAndSessionTopics(t *testing.T) {
+	srv, _, h, _ := newWsTestServer(t)
+	c := dialWorkspaceWS(t, srv)
+	defer c.Close()
+	h.broadcast.ChatNamed("a-chat", "A new name")
+	readInvalidations(t, c, protocol.TopicChats, protocol.TopicSession)
+}
+
+// A question asked of a chat raises the chats topic alone: the Chats item orders
+// and stamps chats by their last question, and a tab shows neither.
+func TestWorkspaceBroadcast_AChatAskedRaisesTheChatsTopic(t *testing.T) {
+	srv, _, h, _ := newWsTestServer(t)
+	c := dialWorkspaceWS(t, srv)
+	defer c.Close()
+	h.broadcast.ChatAsked("a-chat")
+	readInvalidations(t, c, protocol.TopicChats)
+	expectNoMessage(t, c, protocol.TypeInvalidate, 300*time.Millisecond)
+}
+
 // A socket that dies leaves the fan-out set, and its departure costs the
 // survivors nothing: a broadcast after it must still reach them.
 func TestWorkspaceBroadcast_ADeadSocketLeavesTheSurvivorsAlone(t *testing.T) {

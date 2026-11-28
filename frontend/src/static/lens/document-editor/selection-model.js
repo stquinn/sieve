@@ -36,7 +36,7 @@ const DOCUMENT_TARGET = Object.freeze({ kind: 'document', ref: 'doc', range: nul
  * @property {'none'|'caret'|'range'|'block'} selectionType       nothing / cursor / ranged / whole-block NodeSelection
  * @property {number|null} caret                                  cursor (selection head) position; null when 'none'
  * @property {{from:number,to:number}|null} range                 extent (from===to for a caret); null when 'none'
- * @property {string|null} selectedText                           raw selected text when selectionType==='range', else null
+ * @property {string|null} selectedText                           the text the selection holds: a range's raw text, or what a lens quotes from the block it selects; else null
  * @property {string|null} blockId                                primary block the cursor/selection sits in/on
  * @property {string[]}    blockIds                               all blocks the range spans (⊇ [blockId]); [] when 'none'
  * @property {string|null} blockKind                              primary block kind

@@ -1,0 +1,18 @@
+{
+  "uuid": "0198c1a0-0002-7000-8000-000000000001",
+  "type": "chat",
+  "version": 1,
+  "display_name": "Parser error taxonomy",
+  "tags": null,
+  "created": "2026-11-27T13:52:00",
+  "modified": "2026-11-27T14:02:00",
+  "names": [
+    {
+      "name": "0198c1a0-0002-7000-8000-000000000001",
+      "from": "2026-11-27T13:52:00"
+    }
+  ],
+  "extra": {
+    "note_named_by": "hand"
+  }
+}

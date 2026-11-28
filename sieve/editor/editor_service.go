@@ -37,6 +37,23 @@ type ContainerSavedNotifier interface {
 	ContainerSaved(uuid string, version int)
 }
 
+// ChatListener is the optional interface a ContainerSavedNotifier implements to
+// hear what changes how a chat is listed: that a chat, as it was just saved, is
+// called something else than it was before the save, and that a question was
+// asked of it, which makes it the most recently active chat. An answer being
+// written is neither.
+type ChatListener interface {
+	ChatNamed(uuid, name string)
+	ChatAsked(uuid string)
+}
+
+// ChatAnsweredListener hears that the job of an exchange of chat uuid, or of a
+// block in its answer, has ended, in success or not, and that the chat as it then
+// stood has been saved. It is told once per job, after the save.
+type ChatAnsweredListener interface {
+	ChatAnswered(uuid string)
+}
+
 // FocusListener hears which open document the user is reading. The empty uuid
 // means the focused document has gone away and nothing has taken its place.
 //
@@ -48,11 +65,12 @@ type FocusListener interface {
 }
 
 // EditorService is the Go-side editor model. It holds one session per open
-// container — a ShadowDocument for a document, the container itself for a block
-// container — and coordinates all save operations. DocumentService and
-// BlockContainerService own disk.
+// container — a ShadowDocument for a document, a ShadowChat for a chat, the
+// container itself for a block container — and coordinates all save operations.
+// DocumentService, ChatService and BlockContainerService own disk.
 type EditorService struct {
 	documents  *services.DocumentService
+	chats      *services.ChatService           // nil leaves chats unopenable
 	containers *services.BlockContainerService // nil leaves block containers unopenable
 	nodes      domain.NodeResolver             // nil leaves every other node unopenable
 	codec      *block.DocumentCodec
@@ -70,6 +88,7 @@ type EditorService struct {
 	// hears it change. Both are volatile run state, guarded by mu like the rest.
 	focused       string
 	focusListener FocusListener
+	answered      ChatAnsweredListener
 	clipboard     NativeClipboardPort // reads the OS clipboard the webview cannot (#87)
 	pendingDrops  PendingDropSource   // the native drop bucket the webview cannot see (#86)
 	// jobsWG tracks every dispatched block-job goroutine (DispatchJobIfNeeded's
@@ -95,6 +114,14 @@ func NewEditorService(documents *services.DocumentService, codec *block.Document
 		debounce:  d,
 		sessions:  make(map[string]session),
 	}
+}
+
+// SetChats registers the service chats open and are saved through. Without one,
+// a uuid that names no document is not opened as a chat.
+func (es *EditorService) SetChats(c *services.ChatService) {
+	es.mu.Lock()
+	defer es.mu.Unlock()
+	es.chats = c
 }
 
 // SetContainers registers the service block containers open through. Without
@@ -127,6 +154,14 @@ func (es *EditorService) SetSavedNotifier(n ContainerSavedNotifier) {
 	es.mu.Lock()
 	defer es.mu.Unlock()
 	es.saved = n
+}
+
+// SetChatAnsweredListener registers who hears that a job in a chat ended. Nil
+// leaves it unheard.
+func (es *EditorService) SetChatAnsweredListener(l ChatAnsweredListener) {
+	es.mu.Lock()
+	defer es.mu.Unlock()
+	es.answered = l
 }
 
 // SetInspectionEngine registers the engine observed after every op lands on a
@@ -341,7 +376,7 @@ func (es *EditorService) open(uuid string, recoverStuck bool) error {
 
 	doc, err := es.documents.LoadByUUID(uuid)
 	if err != nil {
-		return es.openContainer(uuid, err)
+		return es.openChat(uuid, err, recoverStuck)
 	}
 	// Declare shadow before the closure so the closure can capture the variable.
 	var shadow *block.ShadowDocument
@@ -381,6 +416,38 @@ func (es *EditorService) open(uuid string, recoverStuck bool) error {
 	}
 
 	logger.Info("editor: open", "uuid", uuid, "body_bytes", len(doc.Body()))
+	return nil
+}
+
+// openChat opens uuid as a chat, and failing that as a block container or a
+// node. recoverStuck is open's: a user open recovers the chat's stuck jobs.
+// notDocument is why uuid did not open as a document.
+func (es *EditorService) openChat(uuid string, notDocument error, recoverStuck bool) error {
+	es.mu.RLock()
+	chats := es.chats
+	es.mu.RUnlock()
+	if chats == nil {
+		return es.openContainer(uuid, notDocument)
+	}
+	chat, err := chats.Load(uuid)
+	if errors.Is(err, domain.ErrNotChat) {
+		return es.openContainer(uuid, notDocument)
+	}
+	if err != nil {
+		return err
+	}
+	shadow := block.NewShadowChat(uuid, chat.Exchanges())
+	es.mu.Lock()
+	if _, ok := es.sessions[uuid]; ok {
+		es.mu.Unlock()
+		return nil
+	}
+	es.sessions[uuid] = chatSession{shadow: shadow}
+	es.mu.Unlock()
+	if recoverStuck {
+		es.resetStuckDispatched(uuid, shadow)
+	}
+	logger.Info("editor: open chat", "uuid", uuid, "exchanges", len(chat.Exchanges()))
 	return nil
 }
 
@@ -467,6 +534,20 @@ func (es *EditorService) documentOf(uuid string) (*block.ShadowDocument, error) 
 	return s.document()
 }
 
+// jobsOf returns uuid's open session and what its blocks' jobs run against.
+// Nothing open is ErrNotOpen; a session that holds no jobs answers its own error.
+func (es *EditorService) jobsOf(uuid string) (session, block.JobHolder, error) {
+	s := es.sessionFor(uuid)
+	if s == nil {
+		return nil, nil, fmt.Errorf("%w for uuid %q", ErrNotOpen, uuid)
+	}
+	jobs, err := s.jobs()
+	if err != nil {
+		return nil, nil, err
+	}
+	return s, jobs, nil
+}
+
 // shadowFor returns uuid's open document's shadow, or nil — also for a block
 // container. It is the read a same-package collaborator (the spell checker)
 // takes instead of touching es.sessions, so the map and its lock stay this
@@ -520,32 +601,36 @@ func (es *EditorService) ContainerVersion(uuid string) (int, bool) {
 }
 
 // Blocks returns container uuid's current blocks: the open session's when it is
-// open, else a document's stored body parsed or a block container's one block.
-// The blocks are copies.
+// open, else a document's stored body parsed, a chat's stored exchanges or a
+// block container's one block. The blocks are copies; a uuid naming none of
+// them answers why it is not a document.
 func (es *EditorService) Blocks(uuid string) ([]domain.SieveBlock, error) {
 	if s := es.sessionFor(uuid); s != nil {
 		return s.blocks(), nil
 	}
 	doc, err := es.documents.LoadByUUID(uuid)
-	if err != nil {
-		es.mu.RLock()
-		containers := es.containers
-		es.mu.RUnlock()
-		if containers == nil {
-			return nil, err
-		}
-		c, cerr := containers.Load(uuid)
-		if cerr != nil {
-			return nil, err
-		}
-		return []domain.SieveBlock{c.Block()}, nil
+	if err == nil {
+		return es.codec.Deserialize(string(doc.Body()))
 	}
-	return es.codec.Deserialize(string(doc.Body()))
+	es.mu.RLock()
+	chats, containers := es.chats, es.containers
+	es.mu.RUnlock()
+	if chats != nil {
+		if chat, cerr := chats.Load(uuid); cerr == nil {
+			return chat.Exchanges(), nil
+		}
+	}
+	if containers != nil {
+		if c, cerr := containers.Load(uuid); cerr == nil {
+			return []domain.SieveBlock{c.Block()}, nil
+		}
+	}
+	return nil, err
 }
 
-// AssetHolder returns the id of a block of document uuid that holds asset key,
-// and whether any does. It answers from Blocks, so an open document is judged by
-// what the editor holds now rather than by its last save.
+// AssetHolder returns the id of a block of container uuid that holds asset key,
+// and whether any does. It answers from Blocks, so an open container is judged
+// by what the editor holds now rather than by its last save.
 func (es *EditorService) AssetHolder(uuid, key string) (string, bool, error) {
 	blocks, err := es.Blocks(uuid)
 	if err != nil {
@@ -565,8 +650,8 @@ func (es *EditorService) AssetHolder(uuid, key string) (string, bool, error) {
 
 // resetStuckDispatched finds DISPATCHED blocks older than dispatchedStuckThreshold
 // and resets them to PENDING so DispatchJobIfNeeded will re-run their jobs.
-func (es *EditorService) resetStuckDispatched(uuid string, shadow *block.ShadowDocument) {
-	stuck := shadow.ResetStuckDispatched(dispatchedStuckThreshold)
+func (es *EditorService) resetStuckDispatched(uuid string, jobs block.JobHolder) {
+	stuck := jobs.ResetStuckDispatched(dispatchedStuckThreshold)
 	for _, id := range stuck {
 		logger.Info("editor: resetting stuck DISPATCHED block", "uuid", uuid, "block", id)
 		es.DispatchJobIfNeeded(uuid, id)
@@ -904,6 +989,89 @@ func (es *EditorService) flushShadow(shadow *block.ShadowDocument, source string
 		es.notifySaved(shadow.UUID, saved.Meta().Version())
 		return nil
 	})
+}
+
+// saveChat writes shadow's exchanges as the chat's whole list, starting from the
+// chat as the store holds it now, and announces the save as flushShadow does.
+// Saves of one chat never interleave. A list holding fewer exchanges than the
+// store is refused: a chat only grows, so writing it would lose exchanges.
+func (es *EditorService) saveChat(shadow *block.ShadowChat, reason string) error {
+	es.mu.RLock()
+	chats := es.chats
+	es.mu.RUnlock()
+	if chats == nil {
+		return fmt.Errorf("chat %s: no chat service", shadow.UUID)
+	}
+	return shadow.WithSaveLock(func() error {
+		chat, err := chats.Load(shadow.UUID)
+		if err != nil {
+			logger.Warn("editor: chat save load failed", "uuid", shadow.UUID, "source", reason, "err", err)
+			return err
+		}
+		exchanges := shadow.SnapshotBlocks()
+		if len(exchanges) < len(chat.Exchanges()) {
+			logger.Warn("editor: REFUSED a chat save that would drop exchanges", "uuid", shadow.UUID, "source", reason,
+				"held", len(exchanges), "stored", len(chat.Exchanges()))
+			return fmt.Errorf("chat %s: holds %d exchanges, the store %d", shadow.UUID, len(exchanges), len(chat.Exchanges()))
+		}
+		before := chat.Name()
+		chat.SetExchanges(exchanges)
+		saved, err := chats.Save(chat)
+		if err != nil {
+			logger.Warn("editor: chat save failed", "uuid", shadow.UUID, "source", reason, "err", err)
+			return err
+		}
+		logger.Info("editor: saved chat", "uuid", shadow.UUID, "source", reason, "exchanges", len(exchanges), "version", saved.Version())
+		es.notifySaved(shadow.UUID, saved.Version())
+		if name := saved.Name(); name != before {
+			es.notifyChatNamed(shadow.UUID, name)
+		}
+		return nil
+	})
+}
+
+// ChatNamed is "chat uuid is now called name", from whatever named it: a client
+// holding the chat open is told as it is of any container's name, and the saved
+// notifier, when it hears chats, is told too.
+func (es *EditorService) ChatNamed(uuid, name string) {
+	es.notifyNamed(uuid, name)
+	if n, ok := es.chatListener(); ok {
+		n.ChatNamed(uuid, name)
+	}
+}
+
+// ChatAsked is "a question was asked of chat uuid", passed to the saved
+// notifier when it hears chats.
+func (es *EditorService) ChatAsked(uuid string) { es.notifyChatAsked(uuid) }
+
+// notifyChatNamed is ChatNamed for this service's own saves.
+func (es *EditorService) notifyChatNamed(uuid, name string) { es.ChatNamed(uuid, name) }
+
+// notifyChatAsked tells the saved notifier, when it hears chats, that a question
+// was asked of chat uuid.
+func (es *EditorService) notifyChatAsked(uuid string) {
+	if n, ok := es.chatListener(); ok {
+		n.ChatAsked(uuid)
+	}
+}
+
+// notifyChatAnswered tells the answered listener, when one is registered, that a
+// job in chat uuid ended.
+func (es *EditorService) notifyChatAnswered(uuid string) {
+	es.mu.RLock()
+	l := es.answered
+	es.mu.RUnlock()
+	if l != nil {
+		l.ChatAnswered(uuid)
+	}
+}
+
+// chatListener is the saved notifier as a ChatListener, when it is one.
+func (es *EditorService) chatListener() (ChatListener, bool) {
+	es.mu.RLock()
+	defer es.mu.RUnlock()
+	n, ok := es.saved.(ChatListener)
+	return n, ok
 }
 
 // Refresh is "this container changed behind its open session": the session adopts
@@ -1554,22 +1722,25 @@ func (es *EditorService) mergeAndReact(uuid string, op block.BlockOp) (blk domai
 // listener of the transition (as the top-level block that is it or holds it),
 // flushes to disk, and runs the job.
 func (es *EditorService) DispatchJobIfNeeded(uuid, blockID string) {
-	shadow := es.shadowFor(uuid)
-	if shadow == nil {
+	_, jobs, err := es.jobsOf(uuid)
+	if err != nil {
 		return
 	}
 
 	// Atomically claim the block (PENDING -> DISPATCHED). If it wasn't PENDING,
 	// nothing to do — guarantees the job dispatches exactly once.
-	if _, ok := shadow.TryDispatch(blockID); !ok {
+	if _, ok := jobs.TryDispatch(blockID); !ok {
 		return
 	}
-	if holder, ok := shadow.SnapshotHolder(blockID); ok {
+	if holder, ok := jobs.SnapshotHolder(blockID); ok {
 		es.notifyBlockUpdated(uuid, holder)
 	}
 
-	// Flush state to disk
-	_ = es.Flush(uuid)
+	// Save what the session still holds open; a session closed since the claim
+	// was saved by its close.
+	if s := es.sessionFor(uuid); s != nil {
+		_ = s.save(es, "explicit")
+	}
 
 	// Track the goroutine so a retiring service / a WaitForJobs caller can block
 	// until the job (and the flush its completion writes) has fully finished.
@@ -1590,16 +1761,24 @@ func (es *EditorService) WaitForJobs() {
 }
 
 // applyJobUpdate safely applies block updates resulting from a background job.
-// ALL mutations flow through the in-memory ShadowDocument — the single update
-// path. If the document is closed (no shadow), we open it transiently, apply
-// through the same path, then close it (Close flushes to disk with reason "close").
-func (es *EditorService) applyJobUpdate(uuid, blockID, kind string, updates map[string]interface{}, deletes []string, flushReason string) {
-	shadow := es.shadowFor(uuid)
+// ALL mutations flow through the session's JobHolder — the single update path.
+// settles says whether the job has ended, rather than reported progress; either
+// way the session is saved after the update. If the container is closed, we open
+// it transiently, apply through the same path, then close it (Close saves with
+// reason "close").
+func (es *EditorService) applyJobUpdate(uuid, blockID, kind string, updates map[string]interface{}, deletes []string, settles bool) {
+	s, jobs, err := es.jobsOf(uuid)
 
 	openedTransiently := false
-	if shadow == nil {
-		// Document is closed: open it transiently so the update flows through
-		// the ShadowDocument. recoverStuck=false — a background open must not spawn
+	if err != nil {
+		if !errors.Is(err, ErrNotOpen) {
+			// Open, and holding no jobs: there is nothing to patch, and the session
+			// is its opener's to close.
+			logger.Warn("editor: job update for a container that holds no jobs", "uuid", uuid, "err", err)
+			return
+		}
+		// Container is closed: open it transiently so the update flows through
+		// its JobHolder. recoverStuck=false — a background open must not spawn
 		// recovery jobs that race the Close below. Do NOT hold es.mu across open.
 		if err := es.open(uuid, false); err != nil {
 			logger.Warn("editor: job update failed to open doc transiently", "uuid", uuid, "err", err)
@@ -1607,9 +1786,9 @@ func (es *EditorService) applyJobUpdate(uuid, blockID, kind string, updates map[
 		}
 		openedTransiently = true
 
-		shadow = es.shadowFor(uuid)
-		if shadow == nil {
-			// A block container opens without a shadow: no job writes into one.
+		s, jobs, err = es.jobsOf(uuid)
+		if err != nil {
+			// A block container or a node opens holding no jobs: no job writes into one.
 			logger.Warn("editor: job update shadow missing after transient open", "uuid", uuid)
 			es.Close(uuid)
 			return
@@ -1617,18 +1796,23 @@ func (es *EditorService) applyJobUpdate(uuid, blockID, kind string, updates map[
 	}
 
 	if len(updates) > 0 {
-		shadow.PatchBlock(domain.SieveBlock{ID: blockID, Kind: kind, Attrs: updates})
+		jobs.PatchBlock(domain.SieveBlock{ID: blockID, Kind: kind, Attrs: updates})
 	}
 	for _, k := range deletes {
-		shadow.DeleteBlockAttr(blockID, k)
+		jobs.DeleteBlockAttr(blockID, k)
 	}
-	if flushReason != "" {
-		_ = es.flushShadow(shadow, flushReason)
+	reason := "job-progress"
+	if settles {
+		reason = "job-complete"
 	}
+	_ = s.save(es, reason)
 
 	// An element's change is told as the top-level block holding it.
-	if holder, ok := shadow.SnapshotHolder(blockID); ok {
+	if holder, ok := jobs.SnapshotHolder(blockID); ok {
 		es.notifyBlockUpdated(uuid, holder)
+	}
+	if _, chat := s.(chatSession); chat && settles {
+		es.notifyChatAnswered(uuid)
 	}
 
 	if openedTransiently {
@@ -1637,32 +1821,119 @@ func (es *EditorService) applyJobUpdate(uuid, blockID, kind string, updates map[
 	}
 }
 
-// AnswerHolding is what an answer held in a document takes: any block, a job a
-// block lands waiting on run by the engine and what it makes kept by the
-// document.
+// AnswerHolding is what an answer held in an open container takes: any block, a
+// job a block lands waiting on run by the engine and what it makes kept by the
+// container.
 func (es *EditorService) AnswerHolding() domain.AnswerHolding {
 	return domain.AnswerHolding{RunsJobs: true}
 }
 
 // AppendToAnswer adds el to the answer of the exchange being answered, in its
-// open document, and tells the client; startOver makes el the whole answer,
+// open container, and tells the client; startOver makes el the whole answer,
 // replacing whatever an earlier run left there. An element born PENDING has its
 // kind's job dispatched as any block's is, its result merged into the element;
 // otherwise nothing is saved, and the exchange's job's end saves the answer. An
-// exchange whose document is not open, that is gone, or whose job is not running
-// is refused.
+// exchange whose container is not open or holds no jobs, that is gone, or whose
+// job is not running is refused.
 func (es *EditorService) AppendToAnswer(ex domain.Exchange, el domain.SieveBlock, startOver bool) error {
-	shadow, err := es.documentOf(ex.Container)
+	_, jobs, err := es.jobsOf(ex.Container)
 	if err != nil {
-		return fmt.Errorf("the note holding this exchange: %w", err)
+		return fmt.Errorf("the container holding this exchange: %w", err)
 	}
-	blk, err := shadow.AppendElement(ex.Block, block.AnswerAttr, el, startOver)
+	blk, err := jobs.AppendElement(ex.Block, block.AnswerAttr, el, startOver)
 	if err != nil {
 		return err
 	}
 	es.notifyBlockUpdated(ex.Container, blk)
 	es.DispatchJobIfNeeded(ex.Container, el.ID)
 	return nil
+}
+
+// chatOf returns uuid's open chat. Nothing open is ErrNotOpen; anything else
+// open there is ErrNotChat.
+func (es *EditorService) chatOf(uuid string) (*block.ShadowChat, error) {
+	s := es.sessionFor(uuid)
+	if s == nil {
+		return nil, fmt.Errorf("%w for uuid %q", ErrNotOpen, uuid)
+	}
+	c, ok := s.(chatSession)
+	if !ok {
+		return nil, fmt.Errorf("%w: %s", domain.ErrNotChat, uuid)
+	}
+	return c.shadow, nil
+}
+
+// AppendExchange asks question in the open chat uuid and answers the new
+// exchange's id. The question blocks become, verbatim and in order, the
+// question elements of a new ai-block, made by the ai-block processor's
+// InitAttrs and so born PENDING; an element with no id is given one. The
+// exchange is appended after the last, the chat saved, the saved notifier told
+// the chat was asked (ChatListener), the client told of a created block, and its
+// job dispatched. A chat that is not open, and a question
+// with no blocks, are refused.
+func (es *EditorService) AppendExchange(uuid string, question []domain.SieveBlock) (string, error) {
+	shadow, err := es.chatOf(uuid)
+	if err != nil {
+		return "", fmt.Errorf("append-exchange: %w", err)
+	}
+	if len(question) == 0 {
+		return "", fmt.Errorf("append-exchange: chat %s: a question holds at least one block", uuid)
+	}
+	processor := block.GetProcessor(block.KindAIBlock)
+	if processor == nil {
+		return "", fmt.Errorf("append-exchange: no processor registered for kind %q", block.KindAIBlock)
+	}
+	elements := make(domain.Elements, len(question))
+	for i, b := range question {
+		elements[i] = domain.NewSieveBlock(b.Kind, b.ID, b.Clone().Attrs)
+	}
+	id := ident.New()
+	exchange := domain.SieveBlock{ID: id, Kind: block.KindAIBlock,
+		Attrs: processor.InitAttrs(id, map[string]interface{}{block.QuestionAttr: elements})}
+	if err := shadow.AppendExchange(exchange); err != nil {
+		return "", fmt.Errorf("append-exchange: %w", err)
+	}
+	if err := es.saveChat(shadow, "exchange-asked"); err != nil {
+		return "", fmt.Errorf("append-exchange: %w", err)
+	}
+	es.notifyChatAsked(uuid)
+	if created, ok := shadow.SnapshotBlock(id); ok {
+		es.notifyBlockCreated(uuid, created, shadow.IndexOfBlock(id))
+	}
+	es.DispatchJobIfNeeded(uuid, id)
+	return id, nil
+}
+
+// RetryBlockJob runs the job of block id in the open container uuid again: the block, a top-level
+// block or an element of one, is made PENDING, stamped now with its error cleared, and its job
+// dispatched. A container that is not open or holds no jobs, an id it does not hold, and a block
+// the container's own rule refuses (a chat's exchange that has an answer or is being answered) are
+// refused, and nothing changes.
+func (es *EditorService) RetryBlockJob(uuid, id string) error {
+	s, jobs, err := es.jobsOf(uuid)
+	if err != nil {
+		return fmt.Errorf("retry-block-job %s: %w", id, err)
+	}
+	if err := s.admitRetry(id); err != nil {
+		return fmt.Errorf("retry-block-job %s: %w", id, err)
+	}
+	// Status and createdAt are both reset: the DISPATCHED update told to the client carries the
+	// fresh createdAt, so the client does not take the retried job for a stale one.
+	if !jobs.PatchBlock(domain.SieveBlock{ID: id, Attrs: map[string]interface{}{
+		"status":    block.BlockStatusPending,
+		"createdAt": time.Now().UTC().Format(time.RFC3339),
+		"error":     "",
+	}}) {
+		return fmt.Errorf("retry-block-job %s: container %s holds no such block", id, uuid)
+	}
+	es.DispatchJobIfNeeded(uuid, id)
+	return nil
+}
+
+// IsChat reports whether the session open under uuid is a chat.
+func (es *EditorService) IsChat(uuid string) bool {
+	_, ok := es.sessionFor(uuid).(chatSession)
+	return ok
 }
 
 // RunJob asks the block's processor to DESCRIBE its job (DescribeJob), then routes
@@ -1673,14 +1944,14 @@ func (es *EditorService) AppendToAnswer(ex domain.Exchange, el domain.SieveBlock
 // the shadow (applyJobUpdate). On error the finish closure sets status=ERROR — the
 // framework's uniform error handling, so no processor writes tracking/finish code.
 func (es *EditorService) RunJob(ctx context.Context, uuid, blockID string) {
-	shadow := es.shadowFor(uuid)
-	if shadow == nil {
+	_, jobs, err := es.jobsOf(uuid)
+	if err != nil {
 		return
 	}
 
 	// One lock: a deep copy of the target block (for Apply to mutate) plus an
-	// immutable DocView the job uses to resolve any block by id.
-	snap, doc, ok := shadow.SnapshotForJob(blockID)
+	// immutable ContainerView the job uses to resolve any block by id.
+	snap, doc, ok := jobs.SnapshotForJob(blockID)
 	if !ok {
 		return
 	}
@@ -1699,7 +1970,7 @@ func (es *EditorService) RunJob(ctx context.Context, uuid, blockID string) {
 	// notify lets the processor push intermediate attr updates mid-job
 	// (e.g. push src immediately after saving, before slow AI describe).
 	notify := func(bID string, partialAttrs map[string]interface{}) {
-		es.applyJobUpdate(uuid, bID, kind, partialAttrs, nil, "job-progress")
+		es.applyJobUpdate(uuid, bID, kind, partialAttrs, nil, false)
 	}
 
 	job := processor.DescribeJob(block.JobContext{
@@ -1725,7 +1996,7 @@ func (es *EditorService) RunJob(ctx context.Context, uuid, blockID string) {
 			es.applyJobUpdate(uuid, blockID, kind, map[string]interface{}{
 				"status": es.classifyJobError(err),
 				"error":  err.Error(),
-			}, nil, "job-complete")
+			}, nil, true)
 			return
 		}
 		updates := make(map[string]interface{})
@@ -1741,7 +2012,7 @@ func (es *EditorService) RunJob(ctx context.Context, uuid, blockID string) {
 				deletes = append(deletes, k)
 			}
 		}
-		es.applyJobUpdate(uuid, blockID, kind, updates, deletes, "job-complete")
+		es.applyJobUpdate(uuid, blockID, kind, updates, deletes, true)
 	}
 
 	meta := domain.JobInfo{JobID: blockID, Label: job.Label, DocID: uuid, SpinTab: false}

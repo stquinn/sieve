@@ -27,6 +27,7 @@ describe('contract/ is a leaf package', () => {
     // A directory-read bug (wrong path, empty dir) must not pass the suite by
     // vacuously finding nothing to assert against.
     expect(jsFiles).toEqual([
+      'chat-container-provider.js',
       'container-feed-listener.js',
       'container-provider.js',
       'container-update-listener.js',
@@ -46,6 +47,7 @@ describe('contract/ is a leaf package', () => {
   }
 
   it('every contract module loads as an ES module', async () => {
+    const chatContainerProvider = await import('../src/static/contract/chat-container-provider.js')
     const containerFeedListener = await import('../src/static/contract/container-feed-listener.js')
     const containerProvider = await import('../src/static/contract/container-provider.js')
     const inkContainerProvider = await import('../src/static/contract/ink-container-provider.js')
@@ -53,11 +55,13 @@ describe('contract/ is a leaf package', () => {
     const lensCapabilities = await import('../src/static/contract/lens-capabilities.js')
     const selectionListener = await import('../src/static/contract/selection-listener.js')
     const sieveBlock = await import('../src/static/contract/sieve-block.js')
+    expect(chatContainerProvider).toBeTypeOf('object')
     expect(containerFeedListener).toBeTypeOf('object')
     expect(containerProvider).toBeTypeOf('object')
     expect(Object.isFrozen(inkContainerProvider.InkFeed)).toBe(true)
     expect(containerUpdateListener).toBeTypeOf('object')
     expect(lensCapabilities.LensCapability.BLOCKS).toBe('blocks')
+    expect(lensCapabilities.LensCapability.ASK).toBe('ask')
     expect(selectionListener).toBeTypeOf('object')
     expect(sieveBlock.SieveBlock).toBeTypeOf('function')
   })

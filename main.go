@@ -112,6 +112,7 @@ func buildMenu(app *App) *menu.Menu {
 
 	file := appMenu.AddSubmenu("File")
 	file.AddText("New Note", keys.CmdOrCtrl("n"), js("window.sieveWorkspace?.newNote()"))
+	file.AddText("New Chat", keys.Combo("n", keys.CmdOrCtrlKey, keys.ShiftKey), js("window.sieveWorkspace?.newChat()"))
 	file.AddText("Save", keys.CmdOrCtrl("s"), js("window.sieveWorkspace?.activeTab?.editor?.flushSave()"))
 	file.AddText("Close Tab", keys.CmdOrCtrl("w"), js("window.sieveWorkspace?.closeActiveTab()"))
 	// Export submenu — a home for future export targets (file, PDF, …); only the

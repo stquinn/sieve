@@ -25,6 +25,7 @@ export const WS_SUBPROTOCOL = 'sieve.v1'
 export const DocumentFrame = Object.freeze({
   // client → server
   BLOCK_OP: 'block-op',
+  CHAT_APPEND_EXCHANGE: 'chat-append-exchange',
   DETECT_EXTRACTIONS: 'detect-extractions',
   DOC_UPDATE: 'doc-update',
   ENTER_MARKDOWN: 'enter-markdown',
@@ -120,6 +121,8 @@ export const Topic = Object.freeze({
   INTENT: 'intent',
   // the ink link, its last session's numbers or the synced notes changed
   INK: 'ink',
+  // a chat was created, deleted or renamed
+  CHATS: 'chats',
 })
 /** @typedef {typeof Topic[keyof typeof Topic]} TopicName */
 

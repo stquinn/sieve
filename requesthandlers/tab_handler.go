@@ -32,6 +32,11 @@ func (h *TabHandler) handleTabs(w http.ResponseWriter, r *http.Request) {
 	if h.ServiceProvider.Documents != nil {
 		session.Tabs = h.ServiceProvider.Documents.RefreshTabStatus(session.Tabs)
 	}
+	// A chat is called by its first question, which a save writes after its tab
+	// was made, so its tab's name is read from the chat.
+	if h.ServiceProvider.Chats != nil {
+		session.Tabs = h.ServiceProvider.Chats.RefreshTabNames(session.Tabs)
+	}
 	if err := h.Tmpl.ExecuteTemplate(w, "tabbar.html", session); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}

@@ -1,12 +1,17 @@
 package sieve
 
 import (
+	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"reflect"
 	"sort"
+	"strings"
 	"testing"
 
 	"sieve/sieve/block"
+	"sieve/sieve/command"
 	"sieve/sieve/domain"
 	"sieve/sieve/editor"
 	"sieve/sieve/ink"
@@ -129,5 +134,91 @@ func TestServiceProvider_TheSearchFindsDocumentsThenNotebooks(t *testing.T) {
 	target, err := s.Nodes.Target("sieve://" + c.UUID())
 	if err != nil || target.UUID != c.UUID() || target.Kind != ink.KindDigitalNote || target.Title != "Kitchen plans" {
 		t.Errorf("Target = %+v, %v", target, err)
+	}
+}
+
+// Every command the composition root registers, dispatched from a chat with the
+// chat as its context, either works or refuses in its own words, and none loads
+// the chat as a document. A refusal is a Build or Work error, which is what the
+// command's badge shows. The AI tier is a stub CLI, so nothing here execs one:
+// an AI command's Work is not run.
+func TestServiceProvider_EveryCommandFromAChatWorksOrRefusesInItsOwnWords(t *testing.T) {
+	dir := t.TempDir()
+	fs, err := filestore.NewFileStore(dir, "testhost")
+	if err != nil {
+		t.Fatalf("NewFileStore: %v", err)
+	}
+	s := &ServiceProvider{Jobs: services.NewJobTracker()}
+	s.Init(fs, dir, nil)
+	t.Cleanup(s.Editor.CloseAll)
+	t.Cleanup(block.ResetRegistry)
+	stub := filepath.Join(t.TempDir(), "stub-ai-cli")
+	if err := os.WriteFile(stub, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	settings := s.State.LoadSettings()
+	settings.CLI, settings.CLIPath = "claude", stub
+	if err := s.State.SaveSettings(settings); err != nil {
+		t.Fatal(err)
+	}
+	chat, err := s.Chats.Create("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(map[string]interface{}{
+		"docUuid": chat.UUID(), "selectionType": "none", "blockIds": []string{},
+		"target": map[string]interface{}{"kind": "document", "ref": "doc", "label": "Chat"},
+	})
+
+	const works = ""
+	want := map[string]string{
+		"btw":           works,
+		"now":           works,
+		"stats":         "/stats measures a document, a selection or the text after it, and this is not a document",
+		"uuid":          works,
+		"migrate-ids":   works,
+		"hash":          "/hash: no content to hash",
+		"base64":        "/base64: no content",
+		"env":           works,
+		"jwt":           "/jwt: provide a token",
+		"summary":       "/summary reads a document or a selection, and this is not a document",
+		"todo":          "/todo reads a document or a selection, and this is not a document",
+		"file":          "/file files a document, and this is not one",
+		"metadata":      "/metadata files a document, and this is not one",
+		"keep-and-file": "/keep-and-file files a document, and this is not one",
+	}
+	cmds := s.CommandSet()
+	if len(cmds) != len(want) {
+		t.Fatalf("the command set holds %d commands, the table %d: a new command needs a row", len(cmds), len(want))
+	}
+	for _, c := range cmds {
+		t.Run(c.Name(), func(t *testing.T) {
+			refusal, ok := want[c.Name()]
+			if !ok {
+				t.Fatalf("no row for /%s", c.Name())
+			}
+			text := ""
+			if c.Name() == "btw" {
+				text = "what is a chat?"
+			}
+			got := ""
+			job, err := c.Build(text, command.NewContext(raw, nil, nil))
+			if err != nil {
+				got = err.Error()
+			} else if c.Family() == command.FamilyUtil {
+				if _, err := job.Work(); err != nil {
+					got = err.Error()
+				}
+			}
+			if refusal == works && got != "" {
+				t.Errorf("/%s refused: %q, want it to work", c.Name(), got)
+			}
+			if refusal != works && !strings.HasPrefix(got, refusal) {
+				t.Errorf("/%s said %q, want its refusal %q", c.Name(), got, refusal)
+			}
+		})
+	}
+	if _, err := s.Chats.Load(chat.UUID()); err != nil {
+		t.Errorf("the chat no longer loads as a chat: %v", err)
 	}
 }

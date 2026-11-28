@@ -38,6 +38,7 @@ const EVERY_CAPABILITY = Object.freeze({
   [LensCapability.MENTIONS]: true,
   [LensCapability.COMMANDS]: true,
   [LensCapability.BLOCKS]: true,
+  [LensCapability.ASK]: true,
 })
 
 /**
@@ -219,15 +220,22 @@ export class AbstractEditor extends Lens {
 
   /** Innate abilities narrowed by what this lens was actually given. Called ONCE,
    *  from the constructor, against the options already stored.
+   *
+   *  `ask` needs the lens's own `askAi` and a container that can hold the
+   *  exchange it starts: one the lens mints blocks in, or one that takes a
+   *  question as an exchange of its own (`requestAsk`).
    *  @returns {Readonly<LensCapabilities>} */
   #deriveCapabilities() {
     const innate = /** @type {any} */ (this._innateCapabilities)
+    const blocks = !!innate[LensCapability.BLOCKS] && typeof this.provider.requestAddBlock === 'function'
     return Object.freeze({
       [LensCapability.MARKDOWN]: !!innate[LensCapability.MARKDOWN],
       [LensCapability.MENTIONS]: !!innate[LensCapability.MENTIONS] && !!this.#mentionService,
       [LensCapability.COMMANDS]: !!innate[LensCapability.COMMANDS] && !!this.#commandService,
-      [LensCapability.BLOCKS]: !!innate[LensCapability.BLOCKS]
-        && typeof this.provider.requestAddBlock === 'function',
+      [LensCapability.BLOCKS]: blocks,
+      [LensCapability.ASK]: !!innate[LensCapability.ASK]
+        && typeof (/** @type {any} */ (this)).askAi === 'function'
+        && (blocks || typeof this.provider.requestAsk === 'function'),
     })
   }
 
@@ -737,7 +745,8 @@ export class AbstractEditor extends Lens {
   }
 
   /** Restores (or parks) the scroller position on a FRESH load, right after the
-   *  surface presents its content; 0 is the park-at-top floor.
+   *  surface presents its content; 0 is where the surface opens a container it
+   *  has never shown.
    *  @param {number} value */
   restoreScroll(value) {
     if (this.#surface) this.#surface.applyScroll(value)

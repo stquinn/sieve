@@ -86,10 +86,17 @@ renderers, the point at which an API backend would be swapped in, and `Run`, one
 ### `sieve/editor/`
 
 - `EditorService`.
-- `Router` + `NotesSource` + `BlockSource` = address → Node.
+- `Router` + `NotesSource` + `ChatSource` + `BlockSource` = address → Node.
+- `ChatNamer`: names and describes chats (`docs/how-the-sidebar-works.md`, "Naming a chat"). It is
+  here, not in `services/`, because it asks `AIService`; it stores through `ChatService`.
 - `IdentitySweeper`.
 - `InspectionEngine` + the `Inspector` registry = the text-service lifecycle. `SpellInspector` is
   its first producer; `FindInspector` is find-and-replace, the producer that also writes.
+
+### `sieve/clocktest/`
+
+A clock a test moves by hand (`Clock`: `Now`, `AfterFunc`, `Advance`) and `WaitFor`, for the types
+that take a `now` and an `afterFunc` (the namers). Imported by tests alone.
 
 ### `sieve/ink/`
 

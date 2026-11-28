@@ -14,6 +14,7 @@ import { AbstractEditor } from '../src/static/lens/abstract-editor.js'
 import { ComposerEditor } from '../src/static/lens/document-editor/composer/composer-editor.js'
 import { NoteEditor } from '../src/static/lens/document-editor/note-editor.js'
 import { PromptEditor } from '../src/static/lens/prompt/prompt-editor.js'
+import { ChatLens } from '../src/static/lens/chat/chat-lens.js'
 import { EditorMode } from '../src/static/lens/document-editor/editor-mode.js'
 import { WysiwygSurface } from '../src/static/lens/document-editor/surfaces/wysiwyg-surface.js'
 import { InMemoryContainerProvider } from '../src/static/container/in-memory-container-provider.js'
@@ -66,6 +67,15 @@ function promptProvider() {
   }
 }
 
+/** A chat's container, as a chat's provider is: the read minimum and its two verbs. */
+function chatProvider() {
+  return {
+    getUuid: () => 'chat-1', getKind: () => 'chat', getOrder: () => [], getBlock: () => null,
+    subscribe: vi.fn(), unsubscribe: vi.fn(),
+    getExchanges: () => [], requestAsk: vi.fn(), requestRetry: vi.fn(), nameNow: vi.fn(), rename: vi.fn(),
+  }
+}
+
 /** The composer arrangement the Ask panel builds. */
 function composer(options = {}) {
   return track(new ComposerEditor('draft-1', Object.assign({
@@ -85,22 +95,28 @@ function note(options = {}) {
 }
 
 describe('the arrangements the app builds', () => {
-  it('a COMPOSER: everything but blocks — a draft mints none', () => {
+  it('a COMPOSER: everything but blocks and ask — a draft mints none and is asked nothing', () => {
     expect(composer().getCapabilities()).toEqual({
-      markdown: true, mentions: true, commands: true, blocks: false,
+      markdown: true, mentions: true, commands: true, blocks: false, ask: false,
     })
   })
 
   it('a NOTE editor: everything but commands — it is handed no command service', () => {
     expect(note().getCapabilities()).toEqual({
-      markdown: true, mentions: true, commands: false, blocks: true,
+      markdown: true, mentions: true, commands: false, blocks: true, ask: true,
     })
   })
 
-  it('a PROMPT editor: markdown and mentions; its container has no block half', () => {
+  it('a PROMPT editor: markdown and mentions; its container has no block half and nowhere to hold an exchange', () => {
     const prompt = track(new PromptEditor('prompt:p', { provider: promptProvider(), mentionService }))
     expect(prompt.getCapabilities()).toEqual({
-      markdown: true, mentions: true, commands: false, blocks: false,
+      markdown: true, mentions: true, commands: false, blocks: false, ask: false,
+    })
+  })
+
+  it('a CHAT lens: ask alone — its container takes a question as an exchange of its own', () => {
+    expect(track(new ChatLens('chat-1', { provider: chatProvider(), mentionService })).getCapabilities()).toEqual({
+      markdown: false, mentions: false, commands: false, blocks: false, ask: true,
     })
   })
 
@@ -120,6 +136,13 @@ describe('a dependency is CONFIG, and the spec reflects it honestly', () => {
 
   it('reads blocks off the container it was given — a note over a prompt container mints none', () => {
     expect(note({ provider: promptProvider() }).getCapabilities()[LensCapability.BLOCKS]).toBe(false)
+  })
+
+  it.each([
+    ['a note over a prompt container, which can hold no exchange', () => note({ provider: promptProvider() })],
+    ['a chat lens over a chat that takes no question', () => track(new ChatLens('chat-1', { provider: Object.assign(chatProvider(), { requestAsk: undefined }) }))],
+  ])('reports `ask: false` for %s', (_name, make) => {
+    expect(make().getCapabilities()[LensCapability.ASK]).toBe(false)
   })
 })
 

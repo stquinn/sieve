@@ -89,7 +89,7 @@ export class ContainerModel {
 
   /**
    * @param {string} uuid
-   * @param {string} [kind]  the container's kind as a DATA word ('note' today);
+   * @param {string} [kind]  the container's kind as a DATA word, the noun the server states ('note', 'chat', a block's kind, …);
    *   affordances read it, nothing subclasses on it
    */
   constructor(uuid, kind = 'note') {

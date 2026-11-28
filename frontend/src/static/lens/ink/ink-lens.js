@@ -10,7 +10,7 @@ import { SurfaceEvent, SurfaceIntent } from '../abstract-surface.js'
 import { LensCapability } from '../../contract/lens-capabilities.js'
 import { ContractViolation } from '../../contract/sieve-block.js'
 import { ButtonGroup, ToolbarLabel, ToolbarPlace, ToolbarSeparator } from '../../renderers/toolbar-button.js'
-import { ActionStatus } from './action-status.js'
+import { ActionStatus } from '../../renderers/action-status.js'
 
 /** @typedef {import('../../renderers/action-list.js').ActionList} ActionList */
 /** @typedef {import('../../renderers/action-list.js').ContextMenuItem} ContextMenuItem */
@@ -21,6 +21,7 @@ const NO_CAPABILITY = Object.freeze({
   [LensCapability.MENTIONS]: false,
   [LensCapability.COMMANDS]: false,
   [LensCapability.BLOCKS]: false,
+  [LensCapability.ASK]: false,
 })
 
 export class InkLens extends AbstractEditor {

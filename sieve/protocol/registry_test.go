@@ -20,6 +20,7 @@ func TestRegistry_HoldsTheWholeVocabulary(t *testing.T) {
 			"load", "paste", "detect-extractions", "export", "focus", "text-replace",
 			"feature-control", "set-presenting", "ink-page", "ink-keep-drawing", "ink-open-on-tablet",
 			"ink-transcript", "ink-transcribe-page", "ink-transcript-document", "ink-describe",
+			"chat-append-exchange",
 		}},
 		{ChannelDocument, Outbound, []string{
 			"pong", "markdown-content", "wysiwyg-content", "extract-ack",
@@ -223,9 +224,10 @@ func TestRegistry_EveryEndpointCarriesATypedContract(t *testing.T) {
 // not declare it here ships a spec saying only JSON is accepted.
 func TestRegistry_EndpointsDeclareTheEncodingsTheyAccept(t *testing.T) {
 	form := map[string]bool{
-		"PATCH /api/note/{id}":   true,
-		"POST /api/folder":       true,
-		"PATCH /api/folder/{id}": true,
+		"PATCH /api/note/{id}":       true,
+		"POST /api/folder":           true,
+		"PATCH /api/folder/{id}":     true,
+		"POST /api/chat/{id}/rename": true,
 	}
 	for _, e := range NewRegistry().Endpoints() {
 		key := e.Method + " " + e.Path
@@ -265,7 +267,7 @@ func TestRegistry_TopicsAreTheInvalidationVocabulary(t *testing.T) {
 		got = append(got, string(topic))
 	}
 	sort.Strings(got)
-	want := []string{"ink", "intent", "library", "notes", "prompts", "session"}
+	want := []string{"chats", "ink", "intent", "library", "notes", "prompts", "session"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("topics\n got: %v\nwant: %v", got, want)
 	}

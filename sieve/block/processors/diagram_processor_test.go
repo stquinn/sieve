@@ -118,7 +118,7 @@ func TestDiagramProcessor_BuildContext_withSource(t *testing.T) {
 		Kind:  "diagram",
 		Attrs: map[string]interface{}{"source": "graph TD\n  A-->B"},
 	}
-	ctx := p.BuildContext(blk, block.DocView{UUID: describeDocUUID}, map[string]bool{})
+	ctx := p.BuildContext(blk, block.DocView{ContainerAddressing: block.ContainerAddressing{UUID: describeDocUUID}}, map[string]bool{})
 	if ctx.IsEmpty() {
 		t.Error("BuildContext must return non-empty string when source is set")
 	}

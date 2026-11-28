@@ -28,7 +28,7 @@ func (fakeProc) Transform([]ContentEntry, string, string, Action) map[string]any
 func (fakeProc) DescribeJob(JobContext) *ProcessorJob                            { return nil }
 func (fakeProc) OnChange(*domain.SieveBlock)                                     {}
 func (fakeProc) Mode() BlockMode                                                 { return BlockModeBlock }
-func (fakeProc) BuildContext(domain.SieveBlock, DocView, map[string]bool) AIContext {
+func (fakeProc) BuildContext(domain.SieveBlock, ContainerView, map[string]bool) AIContext {
 	return AIContext{}
 }
 func (fakeProc) MarkdownRepresentation(domain.SieveBlock, string) string { return "" }

@@ -1,0 +1,50 @@
+{{define "chat_icon"}}<svg class="ink-icon" viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>{{end}}
+{{define "chats_sidebar.html"}}<button
+  class="ink-tree__row"
+  style="padding-left:{{indent 0}};"
+  aria-expanded="{{if .Open}}true{{else}}false{{end}}"
+  hx-patch="/api/folder/{{.ID}}"
+  hx-vals='{"open": {{if .Open}}false{{else}}true{{end}}}'
+  hx-target="#htmx-sidebar"
+  hx-swap="innerHTML"
+  hx-push-url="false"
+  data-ctx-id="{{.ID}}"
+  data-ctx-type="chats"
+  data-ctx-name="Chats"
+  title="Chats: your conversations with a model"
+>
+  <span class="ink-tree__chevron">
+    {{if .Open}}
+    <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+    {{else}}
+    <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+    {{end}}
+  </span>
+  {{template "chat_icon"}}
+  <span class="ink-tree__name">Chats</span>
+</button>
+{{if .Open}}
+{{if not .Groups}}
+<div class="sidebar__empty" style="padding-left:{{fileIndent 1}};">No chats yet</div>
+{{else}}
+{{range .Groups}}
+<div class="chats-tree__group" role="heading" aria-level="3" style="padding-left:{{fileIndent 1}};">{{.Heading}}</div>
+{{range .Chats}}
+<button
+  class="sidebar__file ink-tree__item"
+  data-ctx-id="{{.UUID}}"
+  data-ctx-type="chat"
+  data-ctx-name="{{.Title}}"{{if .Active}}
+  data-active{{end}}
+  style="padding-left:{{fileIndent 1}};"
+  onmousedown="window.sieveWorkspace.open('{{.UUID}}')"
+  title="{{.Title}}"
+>
+  {{template "chat_icon"}}
+  <span class="ink-tree__label">{{.Title}}</span>
+  {{if .When}}<span class="chats-tree__when">{{.When}}</span>{{end}}
+</button>
+{{end}}
+{{end}}
+{{end}}
+{{end}}{{end}}

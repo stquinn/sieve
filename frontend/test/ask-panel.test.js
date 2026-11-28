@@ -2,8 +2,9 @@
 // (shell/ask-panel.js), constructed once, wiring the STRUCTURAL #ask-panel DOM
 // (index.html) — never rebuilding it. It owns the target-chip debounce, the
 // focus round-trip (ws.getSelectionContext/setPosition), the pinned flag, and
-// the ws.onSelectionUpdate subscription. On SEND it targets ws.activeBlockEditor()
-// and calls the ONE editor seam (editor.askAi) — never a workspace proxy.
+// the ws.onSelectionUpdate subscription. On SEND it targets ws.activeAskableLens()
+// — the active lens when it publishes `ask` — and calls the ONE lens seam
+// (lens.askAi), never a workspace proxy.
 //
 // #118 fix round 4: the panel has no header — no label, no ✕ button. The box
 // floats, and what it "is asking about" is shown ONLY by the footer's target
@@ -22,11 +23,16 @@
 // still has to resolve.
 import './helpers/seed-vendor.js'
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import fs from 'node:fs'
+import path from 'node:path'
 import { AskPanel } from '../src/static/shell/ask-panel.js'
 import { CommandService } from '../src/static/shell/command-service.js'
 import { ComposerMount } from '../src/static/shell/composer-mount.js'
 import { InMemoryContainerProvider } from '../src/static/container/in-memory-container-provider.js'
 import { QuestionList } from '../src/static/renderers/question-list.js'
+import { ChatLens } from '../src/static/lens/chat/chat-lens.js'
+import { ComposerEditor } from '../src/static/lens/document-editor/composer/composer-editor.js'
+import { Ident } from '../src/static/ident/ident.js'
 // GLOW DROPPED (P4.B) regression guard: ask-panel.js does NOT import these — the
 // mock exists purely as a trip-wire so a future re-coupling would be caught here.
 vi.mock('../src/static/lens/document-editor/surfaces/ai-target-decoration.js', () => ({
@@ -70,13 +76,20 @@ function repin(pinned) {
  * that kept it in a list would not be one. `harvest()` mirrors the real walk
  * closely enough for the panel's decisions — one prose element per
  * blank-line-separated block, then the container's own elements — and a test
- * needing a draft with structure in it pins the body with `compose`.
+ * needing a draft with structure in it pins the body with `compose`. Each
+ * place the panel names keeps a draft of its own, as the real mount's do.
  */
 function fakeComposer() {
-  let value = ''
   let focused = false
-  let provider = new InMemoryContainerProvider()
-  /** @type {any[]|null} */ let elements = null
+  let place = ''
+  /** @type {Map<string, {value: string, elements: any[]|null, provider: InMemoryContainerProvider}>} */
+  const drafts = new Map()
+  const fresh = () => ({ value: '', elements: /** @type {any[]|null} */ (null), provider: new InMemoryContainerProvider() })
+  const draft = () => {
+    let d = drafts.get(place)
+    if (!d) { d = fresh(); drafts.set(place, d) }
+    return d
+  }
   /** @type {Array<() => void>} */ const submits = []
   /** @type {Array<() => void>} */ const changes = []
   /** @type {Array<(c: any) => void>} */ const mentions = []
@@ -88,11 +101,16 @@ function fakeComposer() {
   const caps = { markdown: true, mentions: true, commands: true, blocks: false }
   return {
     opened: 0,
+    /** how many drafts were retired, sent or cleared */
     resets: 0,
+    /** @type {(() => any)|null} where the panel said Up reads what was asked */
+    recalled: null,
     /** @type {string[]} the titles the panel last told the draft to mark */
     marked: [],
     /** @type {string|null} the verb the panel last told the draft to mark */
     verb: null,
+    /** @type {any[]} the elements the panel put into the draft, in order */
+    inserted: [],
     caps,
     open() { this.opened++ },
     capabilities() { return this.opened ? this.caps : null },
@@ -101,19 +119,29 @@ function fakeComposer() {
     focus() { focused = true },
     hasFocus: () => focused,
     blur() { focused = false },
-    read: () => value,
-    cut(start, end) { value = value.slice(0, start) + value.slice(end); changes.forEach((f) => f()) },
-    get provider() { return provider },
+    read: () => draft().value,
+    insert(element) {
+      this.inserted.push(element)
+      draft().provider.requestAddBlock(element.kind, Object.assign({}, element.attrs))
+      changes.forEach((f) => f())
+    },
+    cut(start, end) { const d = draft(); d.value = d.value.slice(0, start) + d.value.slice(end); changes.forEach((f) => f()) },
+    get provider() { return draft().provider },
+    get place() { return place },
+    setPlace(next) { place = next || '' },
+    forget(gone) { drafts.delete(gone || '') },
     harvest() {
-      const body = elements || value.split('\n\n').map((t) => t.trim()).filter(Boolean)
+      const d = draft()
+      const body = d.elements || d.value.split('\n\n').map((t) => t.trim()).filter(Boolean)
         .map((content, i) => ({ kind: 'prose', attrs: { id: 'b' + i, content } }))
       // The container holds the attachments and nothing else here, so the REAL
       // walk over it is exactly the attachment half of the harvest.
-      return body.concat(ComposerMount.elementsOf(provider))
+      return body.concat(ComposerMount.elementsOf(d.provider))
     },
     // A draft is a LIFETIME: retiring one hands back a different container, which
     // is what makes the attachments die with the message.
-    reset() { this.resets++; value = ''; elements = null; provider = new InMemoryContainerProvider() },
+    reset() { this.resets++; drafts.set(place, fresh()) },
+    recallFrom(source) { this.recalled = source },
     onSubmit(fn) { submits.push(fn); return () => {} },
     onChanged(fn) { changes.push(fn); return () => {} },
     onMention(fn) { mentions.push(fn); return () => {} },
@@ -122,12 +150,13 @@ function fakeComposer() {
 
     // ── What the harness drives ──────────────────────────────────────────────
     /** Writes the whole message and fires the change stream, as an edit does. */
-    type(next) { value = next; changes.forEach((f) => f()) },
+    type(next) { draft().value = next; changes.forEach((f) => f()) },
     /** Pins an exact harvest, for a draft with structure in it. Writing IS an
      *  edit, so it fires the change stream exactly as `type` does. */
     compose(list) {
-      elements = list
-      value = list.map((e) => e.attrs.content || e.attrs.source || '').join('\n\n')
+      const d = draft()
+      d.elements = list
+      d.value = list.map((e) => e.attrs.content || e.attrs.source || '').join('\n\n')
       changes.forEach((f) => f())
     },
     /** The Mod+Enter the lens claimed. */
@@ -139,7 +168,7 @@ function fakeComposer() {
     /** A `@` candidate accepted in the draft: the echo lands in the text and the
      *  candidate reaches the panel's manifest, exactly as the surface does it. */
     mention(candidate, message) {
-      value = message == null ? '@' + candidate.title : message
+      draft().value = message == null ? '@' + candidate.title : message
       mentions.forEach((f) => f(candidate))
       changes.forEach((f) => f())
     },
@@ -173,6 +202,7 @@ function fakeWorkspace(editor) {
       return this._editor ? { editor: this._editor, mount: this._mount } : null
     },
     activeBlockEditor() { return this._editor || null },
+    activeAskableLens() { return this._editor || null },
     onSelectionUpdate: (fn) => { subs.push(fn); return () => {} },
     onActiveTabChanged: () => () => {},
     emit: (ctx) => subs.forEach((fn) => fn(ctx)),
@@ -188,6 +218,9 @@ function build(ws, { commands, badges, mentions } = {}) {
   const panel = new AskPanel(ws, commands, badges, mentions, /** @type {any} */ (composer))
   return { panel, composer }
 }
+
+/** A bare keydown for a lens's `claimKey`. @param {string} key */
+const A_KEY = (key) => /** @type {any} */ ({ key, shiftKey: false, altKey: false, ctrlKey: false, metaKey: false })
 
 const send = () => /** @type {HTMLElement} */ (document.querySelector('.ask-popup__send')).click()
 const escape = () => document.getElementById('ask-panel').dispatchEvent(
@@ -333,7 +366,7 @@ describe('AskPanel — F1 send targets the ACTIVE editor with the harvested ques
     expect(editor.askAi).not.toHaveBeenCalled()
   })
 
-  it('send targets whatever editor is active AT SEND (re-pointed via activeBlockEditor)', () => {
+  it('send targets whatever editor is active AT SEND (re-pointed via activeAskableLens)', () => {
     mountPanelDom({ open: true })
     const first = fakeEditor()
     const ws = fakeWorkspace(first)
@@ -1120,7 +1153,7 @@ describe('AskPanel — command mode is derived from the draft (#126)', () => {
     mountPanelDom({ open: true })
     const editor = fakeEditor()
     const ws = fakeWorkspace(editor)
-    ws.activeBlockEditor = () => null
+    ws.activeAskableLens = () => null
     const plane = commandPlane()
     const { composer } = build(ws, { commands: plane.service })
     const sendButton = () => /** @type {HTMLButtonElement} */ (document.querySelector('.ask-popup__send'))
@@ -1148,14 +1181,14 @@ describe('AskPanel — command mode is derived from the draft (#126)', () => {
     mountPanelDom({ open: true })
     const editor = fakeEditor()
     const ws = fakeWorkspace(editor)
-    ws.activeBlockEditor = () => null
+    ws.activeAskableLens = () => null
     const { composer } = build(ws, { commands: commandPlane().service })
     const refusal = () => document.querySelector('.ask-popup__refusal')
     composer.type('what is X?')
     settle()
     expect(refusal()?.textContent).toBe(AskPanel.ASK_UNAVAILABLE)
 
-    ws.activeBlockEditor = () => editor
+    ws.activeAskableLens = () => editor
     ws.emit(editor.getSelectionContext())
     settle()
     expect(refusal()).toBeNull()
@@ -1171,5 +1204,420 @@ describe('AskPanel — command mode is derived from the draft (#126)', () => {
     expect(badge()).toBeNull()
     expect(sendLabel()).toBe('Send')
     expect(composer.verb).toBeNull()
+  })
+})
+
+// PINNED FOR A CONTAINER, AND OVER A CHAT (#259). The workspace pins the ONE
+// panel open for a tab whose mounting says so; the panel stays the same instance,
+// presented as the user's pin presents it, and reaches the chat's lens only as
+// it reaches any lens: the context it advertised, and its ask. The lens here is a real ChatLens over a recording
+// chat provider, unpresented — what it publishes and what its ask does need no
+// surface.
+describe('AskPanel — pinned open for the active container, and over a chat as over a note (#259)', () => {
+  const CHAT = '0198c1a0-0000-7000-8000-0000000000c1'
+  const OTHER = '0198c1a0-0000-7000-8000-0000000000c2'
+
+  function chat() {
+    const provider = {
+      getUuid: () => CHAT, getKind: () => 'chat', getOrder: () => [], getBlock: () => null,
+      subscribe: vi.fn(), unsubscribe: vi.fn(),
+      getExchanges: () => [], requestRetry: vi.fn(), requestAsk: vi.fn(), nameNow: vi.fn(), rename: vi.fn(),
+    }
+    return { lens: new ChatLens(CHAT, { provider }), provider }
+  }
+
+  /** A command plane that resolves `/btw` and records what it dispatched. */
+  function btwPlane() {
+    return {
+      list: () => [{ name: 'btw', description: 'Ask btw' }],
+      resolve: vi.fn((input) => input.startsWith('/btw') ? { cmd: { name: 'btw', description: 'Ask btw' }, args: '' } : null),
+      dispatch: vi.fn(() => ({ correlationId: 'c-x', onResult: vi.fn(), cancel: vi.fn() })),
+    }
+  }
+
+  it('pinning for a container shows the panel open as pinned, brings the draft up and gives it the caret', () => {
+    vi.useFakeTimers()
+    const el = mountPanelDom()
+    const { panel, composer } = build(fakeWorkspace(fakeEditor()))
+    panel.pinFor(CHAT)
+    expect([...el.classList].sort()).toEqual(['ask-panel', 'is-open', 'is-pinned'])
+    expect(composer.opened).toBe(1)
+    vi.runAllTimers()
+    expect(composer.hasFocus()).toBe(true)
+  })
+
+  it('pinned for a container, it is the pinned panel: its handle is there and no height is written over the user\'s', () => {
+    const el = mountPanelDom()
+    const appRoot = document.createElement('div')
+    appRoot.id = 'app-root'
+    appRoot.style.setProperty('--ask-panel-h', '312px')
+    document.body.prepend(appRoot)
+    const { panel } = build(fakeWorkspace(fakeEditor()))
+    panel.pinFor(CHAT)
+    expect(el.querySelector('.ask-composer > .ask-handle')).not.toBeNull()
+    expect(el.getAttribute('style')).toBeNull()
+    expect(appRoot.style.getPropertyValue('--ask-panel-h')).toBe('312px')
+  })
+
+  // THE LOOK IS THE PINNED PANEL'S. No rule styles a panel by the container it is
+  // pinned for, and `is-pinned` reaches only the rule the user's pin reaches.
+  it('the stylesheets style no docked panel, and is-pinned only as the user\'s pin', () => {
+    const rules = ['editor.css', 'shell.css']
+      .map((f) => fs.readFileSync(path.resolve(process.cwd(), 'src/static', f), 'utf8').replace(/\/\*[\s\S]*?\*\//g, ''))
+      .flatMap((css) => [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => ({ selectors: m[1].split(',').map((x) => x.trim()), body: m[2] })))
+    expect(rules.length).toBeGreaterThan(100)
+    expect(rules.filter((r) => r.selectors.some((x) => x.includes('docked')))).toEqual([])
+    const pinned = rules.filter((r) => r.selectors.some((x) => x.includes('is-pinned')))
+    expect(pinned.map((r) => r.selectors)).toEqual([['#session-layout[data-askpanel="on"] ~ * #ask-panel', '#ask-panel.is-pinned']])
+    expect(rules.filter((r) => r.selectors.some((x) => /ask-handle/.test(x)) && /display:\s*none/.test(r.body))).toEqual([])
+  })
+
+  it.each([
+    ['a jump-out', (/** @type {AskPanel} */ panel) => panel.close()],
+    ['Escape', () => escape()],
+    ['an ask sent', (/** @type {AskPanel} */ _panel, /** @type {any} */ composer) => { composer.type('q'); send() }],
+  ])('%s leaves a panel pinned for a container open', (_name, act) => {
+    const el = mountPanelDom()
+    const { panel, composer } = build(fakeWorkspace(fakeEditor()))
+    panel.pinFor(CHAT)
+    act(panel, composer)
+    expect(el.classList.contains('is-open')).toBe(true)
+  })
+
+  it('Escape on a panel pinned for a container does not unpin the user\'s pin', () => {
+    mountPanelDom({ pinned: true })
+    const ajax = vi.fn()
+    window.htmx = /** @type {any} */ ({ ajax })
+    const { panel } = build(fakeWorkspace(fakeEditor()))
+    panel.pinFor(CHAT)
+    escape()
+    expect(ajax).not.toHaveBeenCalled()
+    delete /** @type {any} */ (window).htmx
+  })
+
+  it('a sent message leaves the caret in the next draft of a panel pinned for a container', () => {
+    mountPanelDom()
+    const { panel, composer } = build(fakeWorkspace(fakeEditor()))
+    panel.pinFor(CHAT)
+    composer.type('q')
+    composer.blur()
+    send()
+    expect(composer.resets).toBe(1)
+    expect(composer.hasFocus()).toBe(true)
+  })
+
+  // RELEASED, IT IS WHAT THE USER HAD. Pinning for a container writes nothing of
+  // the user's: leaving the tab returns the panel to the pin the user set, or to
+  // floating, open or closed, as it stood before.
+  it.each([
+    ['floating and closed, it is closed again', { pinned: false, open: false }, ['ask-panel']],
+    ['floating and open, it is open again, floating', { pinned: false, open: true }, ['ask-panel', 'is-open']],
+    ['pinned by the user, it stays pinned', { pinned: true, open: false }, ['ask-panel', 'is-open', 'is-pinned']],
+  ])('releasing returns the panel to what the user had and the workspace\'s draft, keeping the container\'s: %s', (_name, before, classes) => {
+    const el = mountPanelDom(before)
+    const { panel, composer } = build(fakeWorkspace(fakeEditor()))
+    panel.pinFor(CHAT)
+    panel.pinFor(OTHER)
+    composer.type('half a question')
+    panel.pinFor(null)
+    expect([...el.classList].sort()).toEqual(classes)
+    expect(document.getElementById('session-layout')?.dataset.askpanel).toBe(before.pinned ? 'on' : 'off')
+    expect(composer.place).toBe('')
+    panel.pinFor(OTHER)
+    expect(composer.read()).toBe('half a question')
+    expect(composer.resets).toBe(0)
+  })
+
+  it('the user unpinning while the panel is pinned for a container leaves it open there, and closed once released', () => {
+    const el = mountPanelDom({ pinned: true })
+    const { panel } = build(fakeWorkspace(fakeEditor()))
+    panel.pinFor(CHAT)
+    repin(false)
+    expect([...el.classList].sort()).toEqual(['ask-panel', 'is-open', 'is-pinned'])
+    panel.pinFor(null)
+    expect([...el.classList].sort()).toEqual(['ask-panel'])
+  })
+
+  // A PINNED-FOR PANEL'S DRAFT IS ITS CONTAINER'S. Each container it is pinned
+  // for keeps its own unsent draft, and the draft over notes is the workspace's
+  // one, which no visit to a container disturbs.
+  it('two containers keep separate drafts, and the workspace\'s draft is untouched by visiting them', () => {
+    mountPanelDom()
+    const { panel, composer } = build(fakeWorkspace(fakeEditor()))
+    composer.type('about the note')
+    panel.pinFor(CHAT)
+    expect(composer.read()).toBe('')
+    composer.type('to the first chat')
+    panel.pinFor(OTHER)
+    expect(composer.read()).toBe('')
+    composer.type('to the second chat')
+    panel.pinFor(null)
+    expect(composer.read()).toBe('about the note')
+    panel.pinFor(CHAT)
+    expect(composer.read()).toBe('to the first chat')
+    panel.pinFor(OTHER)
+    expect(composer.read()).toBe('to the second chat')
+    expect(composer.resets).toBe(0)
+  })
+
+  it('a sent message retires its container\'s draft, and leaves the others\' drafts alone', () => {
+    mountPanelDom()
+    const { panel, composer } = build(fakeWorkspace(fakeEditor()))
+    panel.pinFor(OTHER)
+    composer.type('kept')
+    panel.pinFor(CHAT)
+    composer.type('q')
+    send()
+    expect([composer.resets, composer.read()]).toEqual([1, ''])
+    panel.pinFor(OTHER)
+    expect(composer.read()).toBe('kept')
+  })
+
+  it.each([
+    ['while the panel is pinned for it', (/** @type {AskPanel} */ panel) => { panel.dropDraft(CHAT); panel.pinFor(OTHER) }],
+    ['while its tab is in the background', (/** @type {AskPanel} */ panel) => { panel.pinFor(OTHER); panel.dropDraft(CHAT) }],
+  ])('a container\'s draft dropped %s is forgotten', (_name, drop) => {
+    mountPanelDom()
+    const { panel, composer } = build(fakeWorkspace(fakeEditor()))
+    panel.pinFor(CHAT)
+    composer.type('unsent')
+    drop(panel)
+    panel.pinFor(CHAT)
+    expect(composer.read()).toBe('')
+  })
+
+  it('releasing a panel that was never pinned for a container changes nothing: a note\'s tab switch leaves it alone', () => {
+    const el = mountPanelDom({ open: true })
+    const { panel } = build(fakeWorkspace(fakeEditor()))
+    panel.pinFor(null)
+    expect([...el.classList].sort()).toEqual(['ask-panel', 'is-open'])
+  })
+
+  it('over a chat, send asks the chat the harvested draft, verbatim, through the lens, and clears the draft', () => {
+    mountPanelDom()
+    const { lens, provider } = chat()
+    const { panel, composer } = build(fakeWorkspace(lens))
+    panel.pinFor(CHAT)
+    const written = [prose('why does this fail?', 'b0'), { kind: 'code', attrs: { id: 'b1', source: 'panic()', language: 'go' } }]
+    composer.compose(written)
+    send()
+    expect(provider.requestAsk.mock.calls).toEqual([[written]])
+    expect(composer.resets).toBe(1)
+  })
+
+  // A QUOTE IS HANDED OVER. The workspace hands the panel what the lens quoted
+  // and the container it is in; the panel mints the reference from that, when
+  // and only when it is asked to, and never asks the selection context for it.
+  const X = '0198c1a0-0000-7000-8000-0000000000e1'
+  const NOTE = '0198c1a0-0000-7000-8000-0000000000a1'
+
+  it('a quote mints the reference it is handed into the draft, and the question asked carries it in place', () => {
+    mountPanelDom()
+    const { lens, provider } = chat()
+    const { panel, composer } = build(fakeWorkspace(lens))
+    panel.pinFor(CHAT)
+    panel.insertQuote(CHAT, X, 'the scanner trims')
+    const quote = QuestionList.quotation(CHAT, X, 'the scanner trims')
+    expect(composer.inserted).toEqual([quote])
+    expect(quote?.attrs.uri).toBe('sieve://' + CHAT + '/' + X)
+    composer.type('why?')
+    send()
+    const [[asked]] = provider.requestAsk.mock.calls
+    expect(asked.map((/** @type {any} */ el) => el.kind)).toEqual(['prose', 'reference'])
+    expect(asked[1].attrs).toMatchObject(/** @type {any} */ (quote).attrs)
+  })
+
+  it('a quote leaves the selection context alone: it is not read, and the target chip keeps what it showed', () => {
+    vi.useFakeTimers()
+    mountPanelDom()
+    const editor = fakeEditor({ kind: 'block', ref: X, label: '"second?"' })
+    const ws = fakeWorkspace(editor)
+    const { panel } = build(ws)
+    panel.pinFor(CHAT)
+    vi.runAllTimers()
+    const shown = document.querySelector('.ask-popup__target')?.textContent
+    ws.getSelectionContext.mockClear()
+    editor.getSelectionContext.mockClear()
+    panel.insertQuote(CHAT, X, 'the scanner trims')
+    vi.runAllTimers()
+    expect(ws.getSelectionContext).not.toHaveBeenCalled()
+    expect(editor.getSelectionContext).not.toHaveBeenCalled()
+    expect(document.querySelector('.ask-popup__target')?.textContent).toBe(shown)
+    expect(shown).toContain('"second?"')
+  })
+
+  it('two quotes are two blocks of the draft, each kept', () => {
+    mountPanelDom()
+    const { lens } = chat()
+    const { panel, composer } = build(fakeWorkspace(lens))
+    panel.pinFor(CHAT)
+    panel.insertQuote(CHAT, X, 'first')
+    panel.insertQuote(CHAT, X, 'second')
+    expect(ComposerMount.elementsOf(composer.provider).map((el) => el.attrs.cache.quote)).toEqual(['first', 'second'])
+  })
+
+  it('a selection that only moves mints nothing, though it carries selected text', () => {
+    vi.useFakeTimers()
+    mountPanelDom()
+    const { lens } = chat()
+    const quoted = Object.freeze({
+      docUuid: CHAT, selectionType: 'block', blockId: X, blockIds: [X], selectedText: 'the scanner trims',
+      target: Object.freeze({ kind: 'block', ref: X, range: null, label: '"the scanner trims"' }),
+    })
+    vi.spyOn(lens, 'getSelectionContext').mockReturnValue(/** @type {any} */ (quoted))
+    const ws = fakeWorkspace(lens)
+    const { panel, composer } = build(ws)
+    panel.pinFor(CHAT)
+    ws.emit(quoted)
+    vi.advanceTimersByTime(150)
+    expect(document.querySelector('.ask-popup__target')?.textContent).toContain('"the scanner trims"')
+    expect(composer.inserted).toEqual([])
+  })
+
+  it.each([
+    ['blank text', NOTE, '  '],
+    ['no container', '', 'x'],
+  ])('%s is no quote', (_name, container, text) => {
+    mountPanelDom()
+    const { panel, composer } = build(fakeWorkspace(fakeEditor()))
+    panel.insertQuote(container, X, text)
+    expect(composer.inserted).toEqual([])
+  })
+
+  it('a quote over a note is minted by the same rule: the panel has no branch on what the container is', () => {
+    const el = mountPanelDom()
+    const { panel, composer } = build(fakeWorkspace(fakeEditor()))
+    panel.insertQuote(NOTE, X, 'the region column')
+    expect(composer.inserted).toEqual([QuestionList.quotation(NOTE, X, 'the region column')])
+    expect(el.classList.contains('is-open')).toBe(true)
+    expect(composer.hasFocus()).toBe(true)
+  })
+
+  it.each([
+    ['', false],
+    [', after a quote, still its ordinary one', true],
+  ])('over a chat, a draft that resolves to a command dispatches it with the chat as its context%s', (_name, quoted) => {
+    mountPanelDom()
+    const { lens, provider } = chat()
+    const commands = btwPlane()
+    const { panel, composer } = build(fakeWorkspace(lens), { commands })
+    panel.pinFor(CHAT)
+    if (quoted) panel.insertQuote(CHAT, X, 'the scanner trims')
+    composer.type('/btw what is X')
+    send()
+    expect(commands.dispatch).toHaveBeenCalledTimes(1)
+    const context = /** @type {any} */ (commands.dispatch.mock.calls[0])[2]
+    expect(context).toBe(lens.getSelectionContext())
+    expect([context.docUuid, context.selectedText]).toEqual([CHAT, null])
+    expect(provider.requestAsk).not.toHaveBeenCalled()
+  })
+})
+
+// UP RECALLS WHAT THE CURRENT EDITOR SAYS WAS ASKED OF IT. The panel hands its
+// composer one source, read at the key: `questionsAsked()` of the active lens
+// that can be asked. Driven here over the REAL composer mount (its surface
+// stubbed) and real ChatLenses over recording chat providers, so nothing the
+// panel sent is what is recalled: the chats' exchanges are.
+describe('AskPanel — Up recalls what the current editor says was asked of it (#102)', () => {
+  const CHAT = '0198c1a0-0000-7000-8000-0000000000c1'
+  const OTHER = '0198c1a0-0000-7000-8000-0000000000c2'
+  const X = '0198c1a0-0000-7000-8000-0000000000e1'
+
+  beforeEach(() => {
+    window.isMod = (e) => !!(e.ctrlKey || e.metaKey)
+    vi.spyOn(ComposerEditor.prototype, 'presentSurface').mockImplementation(() => /** @type {any} */ (null))
+  })
+  afterEach(() => { vi.restoreAllMocks() })
+
+  /** A ChatLens over a chat whose exchanges asked `questions`, each a list of
+   *  elements; `exchanges` grows as the test asks more.
+   *  @param {string} uuid @param {...any[]} questions */
+  function chatAsked(uuid, ...questions) {
+    const exchanges = questions.map((question, i) => Object.freeze({ id: uuid + '-x' + i, kind: 'ai-block', attrs: Object.freeze({ status: 'COMPLETE', question }) }))
+    const provider = {
+      getUuid: () => uuid, getKind: () => 'chat', getOrder: () => exchanges.map((x) => x.id), getBlock: () => null,
+      subscribe: vi.fn(), unsubscribe: vi.fn(),
+      getExchanges: () => exchanges.slice(), requestRetry: vi.fn(), requestAsk: vi.fn(), nameNow: vi.fn(), rename: vi.fn(),
+    }
+    return { lens: new ChatLens(uuid, { provider }), exchanges }
+  }
+
+  /** @param {string} content */
+  const asked = (content) => [{ kind: 'prose', attrs: { id: Ident.mint(), content } }]
+
+  /** The panel over the real composer mount, pinned for `uuid` with `lens` active.
+   *  @param {any} lens @param {string} uuid */
+  function panelOver(lens, uuid) {
+    mountPanelDom()
+    const ws = fakeWorkspace(lens)
+    const mount = new ComposerMount(/** @type {HTMLElement} */ (document.querySelector('.ask-popup__input')))
+    const panel = new AskPanel(/** @type {any} */ (ws), undefined, undefined, undefined, mount)
+    panel.pinFor(uuid)
+    return { panel, mount, ws }
+  }
+
+  /** @param {ComposerMount} mount @param {string} key @returns {boolean} claimed */
+  const press = (mount, key) => /** @type {ComposerEditor} */ (mount.editor).claimKey(A_KEY(key))
+
+  /** @param {ComposerMount} mount @returns {string} the draft, a prose block as its text, any other as its kind */
+  const draft = (mount) => ComposerMount.elementsOf(/** @type {any} */ (mount.provider))
+    .map((e) => e.kind === 'prose' ? e.attrs.content : e.kind).join('|')
+
+  it('Up recalls the chat\'s last question with nothing sent in this run; Up again goes back, Down forward to empty', () => {
+    const { lens } = chatAsked(CHAT, asked('first?'), asked('second?'))
+    const { mount } = panelOver(lens, CHAT)
+    expect([press(mount, 'ArrowUp'), draft(mount)]).toEqual([true, 'second?'])
+    expect([press(mount, 'ArrowUp'), draft(mount)]).toEqual([true, 'first?'])
+    expect([press(mount, 'ArrowDown'), draft(mount)]).toEqual([true, 'second?'])
+    expect([press(mount, 'ArrowDown'), draft(mount)]).toEqual([true, ''])
+    expect(press(mount, 'ArrowDown')).toBe(false)
+  })
+
+  it('a question asked while the panel is open is the first recalled', () => {
+    const { lens, exchanges } = chatAsked(CHAT, asked('first?'))
+    const { mount } = panelOver(lens, CHAT)
+    exchanges.push(Object.freeze({ id: 'x-new', kind: 'ai-block', attrs: Object.freeze({ status: 'PENDING', question: asked('just now?') }) }))
+    expect([press(mount, 'ArrowUp'), draft(mount)]).toEqual([true, 'just now?'])
+  })
+
+  it('a recalled question with a quote and an attachment comes back with both, its attachment chipped', () => {
+    const quote = /** @type {any} */ (QuestionList.quotation(CHAT, X, 'the scanner trims'))
+    const attachment = /** @type {any} */ (QuestionList.attachment('sieve://0198c1a0-0002-7000-8000-0000000000f1', 'Auth Design'))
+    const { lens } = chatAsked(CHAT, [quote, { kind: 'prose', attrs: { content: 'why?' } }, attachment])
+    const { mount } = panelOver(lens, CHAT)
+    press(mount, 'ArrowUp')
+    const recalled = ComposerMount.elementsOf(/** @type {any} */ (mount.provider))
+    expect(recalled.map((e) => e.kind)).toEqual(['reference', 'prose', 'reference'])
+    expect(recalled[0].attrs).toMatchObject(quote.attrs)
+    expect(recalled[2]).toEqual(attachment)
+  })
+
+  it('Up in a draft with words in it is not claimed, and the lens is not asked', () => {
+    const { lens } = chatAsked(CHAT, asked('first?'))
+    const read = vi.spyOn(lens, 'questionsAsked')
+    const { mount } = panelOver(lens, CHAT)
+    const provider = /** @type {any} */ (mount.provider)
+    provider.requestAddBlock('prose', { content: 'half a question' })
+    expect(press(mount, 'ArrowUp')).toBe(false)
+    expect(read).not.toHaveBeenCalled()
+    expect(draft(mount)).toBe('half a question')
+  })
+
+  it('a lens that says nothing of what was asked of it has nothing to recall: Up is not claimed', () => {
+    const { mount } = panelOver(fakeEditor(), '')
+    mount.open()
+    expect([press(mount, 'ArrowUp'), draft(mount)]).toEqual([false, ''])
+  })
+
+  it('each chat recalls only its own questions', () => {
+    const a = chatAsked(CHAT, asked('to a?'))
+    const b = chatAsked(OTHER, asked('to b?'))
+    const { panel, mount, ws } = panelOver(a.lens, CHAT)
+    expect([press(mount, 'ArrowUp'), draft(mount)]).toEqual([true, 'to a?'])
+    ws._editor = b.lens
+    panel.pinFor(OTHER)
+    expect([press(mount, 'ArrowUp'), draft(mount)]).toEqual([true, 'to b?'])
+    expect(press(mount, 'ArrowUp')).toBe(true)
+    expect(draft(mount)).toBe('to b?')
   })
 })

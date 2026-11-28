@@ -227,7 +227,7 @@ func TestAIBlockAnswer_ApplyWritesTheList(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			blk := domain.NewSieveBlock("ai-block", answerAskID, map[string]interface{}{"type": "ASK"})
 			blk.SetElements(block.AnswerAttr, written)
-			job := p.DescribeJob(block.JobContext{Block: &blk, UUID: foldDocUUID, Doc: block.DocView{UUID: foldDocUUID}})
+			job := p.DescribeJob(block.JobContext{Block: &blk, UUID: foldDocUUID, Doc: block.DocView{ContainerAddressing: block.ContainerAddressing{UUID: foldDocUUID}}})
 			if job == nil {
 				t.Fatal("an ai-block always has async work")
 			}

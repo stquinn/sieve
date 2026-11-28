@@ -14,7 +14,11 @@
 //      block's chip carries the full title, bounded only by the text column. The
 //      clamp is the row's to set and never the chip's to assume.
 //
-//   3. THE DISCLOSURE. The chevron is a flex child OF the chip, so hover tints
+//   3. A QUOTE FILLS THE LINE. A reference drawn as a quote is a passage, not a
+//      label, so it takes the text column's width and the `--quote-*` tokens
+//      every quoted passage reads.
+//
+//   4. THE DISCLOSURE. The chevron is a flex child OF the chip, so hover tints
 //      the two as one object.
 //
 // NO TRANSFORMS. The chevron flips by swapping its GLYPH, not by rotating:
@@ -86,5 +90,28 @@ export const referenceStyles = /* css */ `
 
   .reference-block__summary--shown {
     display: block;
+  }
+
+  .reference-block--quote,
+  .reference-block--quote .reference-block__line {
+    width: auto;
+    display: block;
+  }
+
+  /* The quoted text: a blockquote's band, its rule doubled, which is what says
+     it is a reference and opens. Plain text, its line breaks kept. The selector
+     outweighs a host's own rule for a blockquote typed in its editor (the Ask
+     panel's has three classes), so a quote looks the same wherever it is drawn. */
+  .reference-block.reference-block--quote .reference-block__line blockquote.reference-block__quote {
+    margin: 0;
+    padding: 4px 10px;
+    border-left: 7px double var(--quote-accent);
+    cursor: pointer;
+    border-radius: 0 6px 6px 0;
+    background: color-mix(in srgb, var(--quote-accent) var(--quote-tint-strength), transparent);
+    color: var(--theme-text);
+    font-style: normal;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
   }
 `

@@ -162,6 +162,8 @@ describe('lens/ is reachable-from nothing but contract/, renderers/ and the libr
       path.join('lens', 'abstract-surface.js'),
       path.join('lens', 'block', 'block-lens.js'),
       path.join('lens', 'block', 'block-record-surface.js'),
+      path.join('lens', 'chat', 'chat-lens.js'),
+      path.join('lens', 'chat', 'chat-thread-surface.js'),
       path.join('lens', 'document-editor', 'block-chrome.js'),
       path.join('lens', 'document-editor', 'block-selection.js'),
       path.join('lens', 'document-editor', 'block-sync.js'),
@@ -216,7 +218,6 @@ describe('lens/ is reachable-from nothing but contract/, renderers/ and the libr
       path.join('lens', 'document-editor', 'surfaces', 'vertical-scroll.js'),
       path.join('lens', 'document-editor', 'surfaces', 'wysiwyg-surface.js'),
       path.join('lens', 'extensions.js'),
-      path.join('lens', 'ink', 'action-status.js'),
       path.join('lens', 'ink', 'digital-note-lens.js'),
       path.join('lens', 'ink', 'ink-lens.js'),
       path.join('lens', 'ink', 'ink-place.js'),
@@ -283,6 +284,7 @@ describe('the lens bases are not ProseMirror', () => {
     path.join('lens', 'abstract-editor.js'),
     path.join('lens', 'abstract-surface.js'),
     path.join('lens', 'block', 'block-lens.js'),
+    path.join('lens', 'chat', 'chat-lens.js'),
     path.join('lens', 'ink', 'ink-lens.js'),
     path.join('lens', 'ink', 'digital-note-lens.js'),
     path.join('lens', 'ink', 'live-ink-lens.js'),
@@ -294,6 +296,7 @@ describe('the lens bases are not ProseMirror', () => {
 
 describe.each([
   ['the fallback lens', 'block'],
+  ['the chat lens', 'chat'],
   ['the ink lenses', 'ink'],
 ])('%s import only the lens bases, contract/, renderers/ and their own directory', (_name, dir) => {
   // A lens of its own kind sits beside the editor: what it may name is the wall,
@@ -324,5 +327,25 @@ describe('the workspace toolbar and its widgets name no lens and no ProseMirror'
     [path.join('shell', 'workspace-toolbar.js'), [path.join('lens', 'abstract-surface.js'), path.join('renderers', 'toolbar-button.js'), path.join('shell', 'workspace-toolbar.js')]],
   ])('%s reaches only %j', (entry, closure) => {
     expect(new ImportGraph([]).walk([path.join(STATIC, entry)]).reached).toEqual(closure)
+  })
+})
+
+describe('a chat\'s draft, recall, count and scroll are the workspace\'s generic parts', () => {
+  // The Ask panel and its composer mount key a draft by the container the panel
+  // is pinned open for and never ask what it is; the chat lens takes part only through what every
+  // lens offers and names no panel; the pending slot is given the time and keeps
+  // no clock; and the composer's Up is a mount claim, not a listener of its own.
+  /** @param {string} rel @returns {string} the file's source, its comments dropped */
+  const code = (rel) => readFileSync(path.join(STATIC, rel), 'utf8').replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, '')
+
+  it.each([
+    [path.join('shell', 'ask-panel.js'), /getKind\(|\.kind\s*[!=]==?\s*['"](?!reference|prose)|['"]chat['"]|pinsAskPanel|ChatLens|is-docked|thread-/],
+    [path.join('shell', 'composer-mount.js'), /getKind\(|['"]chat['"]|ChatLens|addEventListener|window\./],
+    [path.join('lens', 'document-editor', 'composer', 'composer-editor.js'), /addEventListener|['"]chat['"]/],
+    ...ImportGraph.sources(path.join(LENS_DIR, 'chat')).map((f) => [path.relative(STATIC, f), /ask-?panel|window\.|document\.addEventListener/i]),
+    [path.join('renderers', 'pending-slot.js'), /setInterval|setTimeout|Date\.now|new Date\(\)/],
+    [path.join('renderers', 'chat-message.js'), /setInterval|setTimeout|ask-?panel/i],
+  ])('%s does not match %s', (rel, forbidden) => {
+    expect(code(/** @type {string} */ (rel))).not.toMatch(/** @type {RegExp} */ (forbidden))
   })
 })

@@ -12,6 +12,7 @@
     <button id="settings-tab-btn-logs" class="settings-tab-btn {{if eq .LastSettingsPanel "logs"}}active{{end}}" onclick="switchSettingsTab(this, 'logs')" style="text-align: left; padding: 0.6rem 1rem; border-radius: 0.5rem; font-size: 0.875rem; font-weight: 600; border: none; cursor: pointer; background: {{if eq .LastSettingsPanel "logs"}}var(--theme-bg){{else}}transparent{{end}}; color: {{if eq .LastSettingsPanel "logs"}}var(--theme-accentPrimary){{else}}var(--theme-textDim){{end}}; transition: all 0.2s;">Logs</button>
     <button id="settings-tab-btn-spelling" class="settings-tab-btn {{if eq .LastSettingsPanel "spelling"}}active{{end}}" onclick="switchSettingsTab(this, 'spelling')" style="text-align: left; padding: 0.6rem 1rem; border-radius: 0.5rem; font-size: 0.875rem; font-weight: 600; border: none; cursor: pointer; background: {{if eq .LastSettingsPanel "spelling"}}var(--theme-bg){{else}}transparent{{end}}; color: {{if eq .LastSettingsPanel "spelling"}}var(--theme-accentPrimary){{else}}var(--theme-textDim){{end}}; transition: all 0.2s;">Spelling</button>
     <button id="settings-tab-btn-ink" class="settings-tab-btn {{if eq .LastSettingsPanel "ink"}}active{{end}}" onclick="switchSettingsTab(this, 'ink')" style="text-align: left; padding: 0.6rem 1rem; border-radius: 0.5rem; font-size: 0.875rem; font-weight: 600; border: none; cursor: pointer; background: {{if eq .LastSettingsPanel "ink"}}var(--theme-bg){{else}}transparent{{end}}; color: {{if eq .LastSettingsPanel "ink"}}var(--theme-accentPrimary){{else}}var(--theme-textDim){{end}}; transition: all 0.2s;">Notebooks</button>
+    <button id="settings-tab-btn-chats" class="settings-tab-btn {{if eq .LastSettingsPanel "chats"}}active{{end}}" onclick="switchSettingsTab(this, 'chats')" style="text-align: left; padding: 0.6rem 1rem; border-radius: 0.5rem; font-size: 0.875rem; font-weight: 600; border: none; cursor: pointer; background: {{if eq .LastSettingsPanel "chats"}}var(--theme-bg){{else}}transparent{{end}}; color: {{if eq .LastSettingsPanel "chats"}}var(--theme-accentPrimary){{else}}var(--theme-textDim){{end}}; transition: all 0.2s;">Chats</button>
   </div>
 
   <!-- Content -->
@@ -358,8 +359,8 @@
         </p>
       </div>
 
-      <!-- One row: three short numeric fields, each a full row plus a help line, made this panel scroll. -->
-      <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; margin-bottom: 1.5rem;">
+      <!-- One row: four short numeric fields, each a full row plus a help line, made this panel scroll. -->
+      <div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1rem; margin-bottom: 1.5rem;">
         <div>
           <label style="display: block; font-size: 0.75rem; font-weight: bold; color: var(--theme-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.5rem;">Line height</label>
           <input type="number" name="look_and_feel_editor_line_height" min="1.2" max="2.4" step="0.05" placeholder="1.75" value="{{.LookAndFeel.EditorLineHeight}}" style="width: 100%; background: var(--theme-bg); border: 1px solid var(--theme-border); border-radius: 0.5rem; padding: 0.6rem 1rem; color: var(--theme-text); outline: none;">
@@ -374,6 +375,11 @@
           <label style="display: block; font-size: 0.75rem; font-weight: bold; color: var(--theme-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.5rem;">Presentation width</label>
           <input type="number" name="look_and_feel_presentation_measure" min="48" max="140" step="1" placeholder="72" value="{{trimUnit .LookAndFeel.PresentationMeasure}}" style="width: 100%; background: var(--theme-bg); border: 1px solid var(--theme-border); border-radius: 0.5rem; padding: 0.6rem 1rem; color: var(--theme-text); outline: none;">
           <p style="font-size: 0.75rem; color: var(--theme-textDim); margin-top: 0.4rem;">48-140 chars. Blank = 72.</p>
+        </div>
+        <div>
+          <label style="display: block; font-size: 0.75rem; font-weight: bold; color: var(--theme-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.5rem;">Chat width</label>
+          <input type="number" name="look_and_feel_chat_measure" min="48" max="140" step="1" placeholder="100" value="{{trimUnit .LookAndFeel.ChatMeasure}}" style="width: 100%; background: var(--theme-bg); border: 1px solid var(--theme-border); border-radius: 0.5rem; padding: 0.6rem 1rem; color: var(--theme-text); outline: none;">
+          <p style="font-size: 0.75rem; color: var(--theme-textDim); margin-top: 0.4rem;">48-140 chars. Blank = 100.</p>
         </div>
       </div>
 
@@ -511,6 +517,16 @@ if (x &lt;= y) return "ok";</code>
     <div class="settings-tab-content" id="settings-tab-ink" style="display: {{if eq .LastSettingsPanel "ink"}}block{{else}}none{{end}};">
       <h3 style="font-size: 1.125rem; font-weight: 600; color: var(--theme-text); margin-bottom: 1.5rem;">Notebooks</h3>
       <div id="ink-status" hx-get="/ui/views/settings/ink" hx-trigger="load, sieve:invalidate-ink from:document" hx-target="this" hx-swap="innerHTML" hx-params="none"></div>
+    </div>
+
+    <div class="settings-tab-content" id="settings-tab-chats" style="display: {{if eq .LastSettingsPanel "chats"}}block{{else}}none{{end}};">
+      <h3 style="font-size: 1.125rem; font-weight: 600; color: var(--theme-text); margin-bottom: 1.5rem;">Chats</h3>
+
+      <div style="margin-bottom: 1.5rem;">
+        <label for="chat-settle-seconds" style="display: block; font-size: 0.75rem; font-weight: bold; color: var(--theme-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.5rem;">Name a chat again after (seconds)</label>
+        <input type="number" min="1" id="chat-settle-seconds" name="chat_settle_seconds" value="{{printf "%.0f" .Chat.Settle.Seconds}}" style="width: 100%; background: var(--theme-bg); border: 1px solid var(--theme-border); border-radius: 0.5rem; padding: 0.6rem 1rem; color: var(--theme-text); outline: none;">
+        <p style="margin-top: 0.4rem; font-size: 0.75rem; color: var(--theme-textDim); line-height: 1.4;">A chat is named and summarised by the AI after its first answer, and again once it has grown and then gone this long with no question asked and no answer being written. Blank is five minutes.</p>
+      </div>
     </div>
     </div><!-- /settings-scroll -->
 
@@ -730,6 +746,7 @@ function toggleMcpTransportFields(select) {
     look_and_feel_editor_line_height:['--theme-editorLineHeight', ''],
     look_and_feel_editor_measure:    ['--theme-editorMeasure', 'ch'],
     look_and_feel_presentation_measure: ['--theme-presentationMeasure', 'ch'],
+    look_and_feel_chat_measure:      ['--theme-chatMeasure', 'ch'],
   };
 
   function apply(el) {

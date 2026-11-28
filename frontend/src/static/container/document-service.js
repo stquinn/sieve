@@ -10,14 +10,15 @@
 // subscription registry, which is a set of listeners keyed by uuid and not a view of
 // any container.
 //
-// ONE TRANSPORT WITH ONE EXCEPTION. A document verb is a frame on that document's
-// channel. The exception is the PROMPT pseudo-document, which never opens one, so
-// its load and its save are the only two verbs with an HTTP half.
+// ONE TRANSPORT WITH TWO EXCEPTIONS. A document verb is a frame on that document's
+// channel. The PROMPT pseudo-document never opens one, so its load and its save
+// have an HTTP half; and a chat is named, now or by hand, over its own HTTP routes,
+// which the chat's row and tab menus call too.
 //
 // A channel-less uuid degrades PER VERB rather than by one uniform rule:
 // flushContents and setContents fall back to the HTTP save; getContents and exportAs
-// fall back to the load answer; focus, persist, retry and setFeature drop; the
-// membership verbs and extract resolve {ok:false}; detectExtractions resolves no
+// fall back to the load answer; focus, persist, retry, chatAppendExchange and
+// setFeature drop; the membership verbs and extract resolve {ok:false}; detectExtractions resolves no
 // offers and replaceText resolves `error`. paste and the ink verbs REJECT, so a
 // channel-less caller of any of them needs its own catch.
 
@@ -413,6 +414,62 @@ export class DocumentService {
    *  @param {string} uuid @param {string} blockId */
   retry(uuid, blockId) {
     this.#transport._send(uuid, { type: DocumentFrame.RETRY_BLOCK_JOB, uuid: uuid, id: blockId })
+  }
+
+  /**
+   * Asks a question in this channel's chat, as a new exchange after the last.
+   * Each block travels in wire shape, its creator's name lifted from `attrs.id`
+   * onto `id` ('' asks Go to name it). Fire-and-forget: Go answers nothing, the
+   * exchange arrives as an insert-block and its answer as block-attrs-updated
+   * frames, and a question Go refuses comes back as an error frame.
+   * @param {string} uuid
+   * @param {ReadonlyArray<{kind: string, attrs?: Record<string, any>}>} question
+   */
+  chatAppendExchange(uuid, question) {
+    this.#transport._send(uuid, {
+      type: DocumentFrame.CHAT_APPEND_EXCHANGE,
+      question: (question || []).map((b) => {
+        const attrs = b.attrs || {}
+        return { id: typeof attrs.id === 'string' ? attrs.id : '', kind: b.kind, attrs: attrs }
+      }),
+    })
+  }
+
+  /**
+   * Asks for chat `uuid` to be named now (`POST /api/chat/{id}/describe`), and
+   * resolves once Go has submitted the naming, or found it already under way.
+   * The new name arrives as the chats and session invalidations.
+   *
+   * REJECTS with Go's words when it submitted nothing — no AI is configured, the
+   * chat has no answer yet, or it is no chat — and when the request fails.
+   * @param {string} uuid
+   * @returns {Promise<void>}
+   */
+  chatDescribe(uuid) {
+    return this.#chatRequest('/api/chat/' + encodeURIComponent(uuid) + '/describe', {})
+  }
+
+  /**
+   * Gives chat `uuid` `name` by hand (`POST /api/chat/{id}/rename`), a blank one
+   * handing naming back, and resolves once it is renamed. REJECTS with Go's words
+   * when it is not, and when the request fails.
+   * @param {string} uuid @param {string} name
+   * @returns {Promise<void>}
+   */
+  chatRename(uuid, name) {
+    return this.#chatRequest('/api/chat/' + encodeURIComponent(uuid) + '/rename', {
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: name }),
+    })
+  }
+
+  /** POSTs to one of a chat's routes; a refusal rejects with the plain-text body Go answers.
+   *  @param {string} url @param {RequestInit} init @returns {Promise<void>} */
+  #chatRequest(url, init) {
+    return fetch(url, Object.assign({ method: 'POST' }, init)).then((res) => {
+      if (res.ok) return
+      return res.text().then((text) => { throw new Error(String(text || '').trim() || 'The request failed') })
+    })
   }
 
   /**

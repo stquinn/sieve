@@ -955,9 +955,9 @@ import { selectNextScope } from './interaction-policy.js'
     document.dispatchEvent(new CustomEvent('sieve:status-message', { detail: { text: text, error: !!error } }))
   }
 
-  // POSTs to a notebook's action route and resolves its response; a failure
-  // rejects with the plain-text body the route answers.
-  function notebookRequest(url) {
+  // POSTs to a notebook's or a chat's action route and resolves its response; a
+  // failure rejects with the plain-text body the route answers.
+  function actionRequest(url) {
     return fetch(url, { method: 'POST' }).then(function (res) {
       if (res.ok) return res
       return res.text().then(function (text) { throw new Error(text.trim() || 'The request failed') })
@@ -970,18 +970,18 @@ import { selectNextScope } from './interaction-policy.js'
     var items = [
       { icon: IC.externalLink, label: 'Open on device', action: function () {
         sayStatus('Opening ' + called + ' on the tablet…')
-        notebookRequest('/api/ink/notes/' + id + '/open-on-tablet')
+        actionRequest('/api/ink/notes/' + id + '/open-on-tablet')
           .then(function (res) { return res.json() })
           .then(function (answer) { sayStatus(answer.message, answer.outcome !== 'opened') })
           .catch(function (err) { sayStatus(err.message, true) })
       }},
       { icon: IC.refresh, label: 'Resync', action: function () {
-        notebookRequest('/api/ink/notes/' + id + '/resync')
+        actionRequest('/api/ink/notes/' + id + '/resync')
           .then(function () { sayStatus('Resyncing ' + called + ' from the tablet…') })
           .catch(function (err) { sayStatus(err.message, true) })
       }},
       { icon: IC.refresh, label: 'Refresh name and summary', action: function () {
-        notebookRequest('/api/ink/notes/' + id + '/describe')
+        actionRequest('/api/ink/notes/' + id + '/describe')
           .then(function () { sayStatus('Naming ' + called + '…') })
           .catch(function (err) { sayStatus(err.message, true) })
       }},
@@ -1043,6 +1043,43 @@ import { selectNextScope } from './interaction-policy.js'
     return items
   }
 
+  // The Chats item's row: New Chat.
+  function buildChatsItems() {
+    return [
+      { icon: IC.ask, label: 'New Chat', action: function () { window.sieveWorkspace.newChat() } },
+    ]
+  }
+
+  // A chat, as a row of the Chats item or as a tab: Open on a row, Name now,
+  // Rename... behind the rename dialog, Delete behind the delete dialog, and on a
+  // tab every tab's verbs.
+  function buildChatItems(ctx) {
+    var items = []
+    var called = ctx.name || 'the chat'
+    if (ctx.name) items.push({ type: 'header', label: ctx.name })
+    if (!ctx.isTab) {
+      items.push({ icon: IC.eye, label: 'Open', action: function () { window.sieveWorkspace.open(ctx.id) } })
+    }
+    items.push({ icon: IC.refresh, label: 'Name now', action: function () {
+      actionRequest('/api/chat/' + encodeURIComponent(ctx.id) + '/describe')
+        .then(function () { sayStatus('Naming ' + called + '…') })
+        .catch(function (err) { sayStatus(err.message, true) })
+    }})
+    items.push({ icon: IC.edit, label: 'Rename...', action: function () {
+      hx('GET', '/ui/views/sidebar/dialog/rename?id=' + encodeURIComponent(ctx.id) + '&name=' + encodeURIComponent(ctx.name || '') + '&type=chat',
+        { target: '#rename-dialog-content', swap: 'innerHTML' }
+      ).then(function () { document.getElementById('rename-dialog').showModal() })
+    }})
+    items.push({ type: 'divider' })
+    items.push({ icon: IC.trash, label: 'Delete Chat...', cls: 'ctx-item--danger', action: function () {
+      hx('GET', '/ui/views/sidebar/dialog/delete?id=' + encodeURIComponent(ctx.id) + '&name=' + encodeURIComponent(ctx.name || '') + '&type=chat',
+        { target: '#delete-dialog-content', swap: 'innerHTML' }
+      ).then(function () { document.getElementById('delete-dialog').showModal() })
+    }})
+    if (ctx.isTab) items = items.concat(tabItems(ctx.id))
+    return items
+  }
+
   function buildPromptItems(ctx) {
     var id = ctx.id, name = ctx.name, isVirtual = ctx.isVirtual, isTab = ctx.isTab
     var items = []
@@ -1074,6 +1111,8 @@ import { selectNextScope } from './interaction-policy.js'
       case 'tab':       items = buildTabItems(ctx); break
       case 'notebook':  items = buildNotebookItems(ctx); break
       case 'inkLive':   items = buildInkLiveItems(ctx); break
+      case 'chats':     items = buildChatsItems(); break
+      case 'chat':      items = buildChatItems(ctx); break
       case 'sieveBlock': items = ctx.items || []; break
       default: return
     }

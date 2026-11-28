@@ -9,6 +9,54 @@ info:
     Routes serving hypermedia or bytes are deliberately absent: their contract is the
     template they render, and docs/API.md inventories them.
 paths:
+  /api/chat/{id}/describe:
+    post:
+      operationId: postApiChatIdDescribe
+      summary: 'ChatDescribeRequest names a chat now: {id} is the chat, and its name (unless a person named it), summary, keywords and categories are described again from its answered exchanges, whether or not it has grown since it was last described.'
+      description: |-
+        ChatDescribeRequest names a chat now: {id} is the chat, and its name (unless a person named it),
+        summary, keywords and categories are described again from its answered exchanges, whether or
+        not it has grown since it was last described. 204 is the job submitted, or one already naming
+        the chat. Otherwise the body is plain text a person can be shown: 404 for no chat, 409 when
+        nothing can name it now (no AI is configured, or the chat has no answer yet), 503 when chats are
+        unavailable. The request has no body.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: 204, or a body no caller reads
+  /api/chat/{id}/rename:
+    post:
+      operationId: postApiChatIdRename
+      summary: 'ChatRenameRequest names a chat by hand: {id} is the chat.'
+      description: |-
+        ChatRenameRequest names a chat by hand: {id} is the chat. A name is kept by every later
+        description, which describes the chat's summary, keywords and categories and leaves its name; a
+        blank one hands naming back, the chat called by the opening words of its first question until it
+        is next described. The tab and the Chats row follow on the chats and session topics. 204 is the
+        chat renamed; 404 is no chat, with a plain-text body.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProtocolChatRenameRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/ProtocolChatRenameRequest'
+      responses:
+        "204":
+          description: 204, or a body no caller reads
   /api/document/load:
     get:
       operationId: getApiDocumentLoad
@@ -383,6 +431,29 @@ components:
         document still holds is refused with 409, judged against the blocks the editor
         holds now; deleting the block that holds it is the way to free it. A deleted
         asset is announced as an invalidate of the notes topic. The request has no body.
+    ProtocolChatDescribeRequest:
+      type: object
+      description: |-
+        ChatDescribeRequest names a chat now: {id} is the chat, and its name (unless a person named it),
+        summary, keywords and categories are described again from its answered exchanges, whether or
+        not it has grown since it was last described. 204 is the job submitted, or one already naming
+        the chat. Otherwise the body is plain text a person can be shown: 404 for no chat, 409 when
+        nothing can name it now (no AI is configured, or the chat has no answer yet), 503 when chats are
+        unavailable. The request has no body.
+    ProtocolChatRenameRequest:
+      type: object
+      description: |-
+        ChatRenameRequest names a chat by hand: {id} is the chat. A name is kept by every later
+        description, which describes the chat's summary, keywords and categories and leaves its name; a
+        blank one hands naming back, the chat called by the opening words of its first question until it
+        is next described. The tab and the Chats row follow on the chats and session topics. 204 is the
+        chat renamed; 404 is no chat, with a plain-text body.
+      properties:
+        name:
+          type: string
+          description: the chat's new name, trimmed; empty hands naming back
+      required:
+        - name
     ProtocolDocumentContent:
       type: object
       description: |-
@@ -407,7 +478,7 @@ components:
           description: what the container is called; absent when it has no name
         scroll:
           type: integer
-          description: the tab's saved scroll offset; 0 parks at the top
+          description: the tab's saved scroll position, in its surface's own pixels; 0 is where the surface opens a container never seen (a document's top, a chat's newest message)
         version:
           type: integer
           description: the version of the content served here; 0 when the container keeps no version history

@@ -61,6 +61,17 @@ func (b requestBody) folderPatch() (protocol.FolderPatchRequest, error) {
 	return req, nil
 }
 
+// chatRename reads a chat's new name.
+func (b requestBody) chatRename() (protocol.ChatRenameRequest, error) {
+	var req protocol.ChatRenameRequest
+	if b.isJSON() {
+		err := json.NewDecoder(b.r.Body).Decode(&req)
+		return req, err
+	}
+	req.Name = b.r.FormValue("name")
+	return req, nil
+}
+
 // folderCreate reads the new folder's name.
 func (b requestBody) folderCreate() (protocol.FolderCreateRequest, error) {
 	var req protocol.FolderCreateRequest

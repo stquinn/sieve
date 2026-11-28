@@ -14,9 +14,9 @@ import (
 func TestDeriveMarkdown_WysiwygReflectsLiveTree(t *testing.T) {
 	shadow := &ShadowDocument{
 		UUID: "u",
-		Blocks: []domain.SieveBlock{
+		LiveBlocks: LiveBlocks{Blocks: []domain.SieveBlock{
 			{ID: "pr-1", Kind: KindProse, Attrs: map[string]interface{}{"content": "Original prose."}},
-		},
+		}},
 	}
 
 	// Mutate the tree the way an edit would — no Markdown field to keep in sync.

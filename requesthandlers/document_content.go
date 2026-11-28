@@ -67,15 +67,25 @@ func (c documentContent) read(uuid string) (protocol.DocumentContent, bool) {
 	return content, true
 }
 
-// readContainer returns the content of uuid as the one block the editor opens it
-// to — a block container's, at its version, or another node's, unversioned — or
-// false when the editor opens nothing there.
+// readContainer returns the content of uuid as the blocks the editor opens it to — a chat's
+// exchanges in order, kind chat; or the one block of a block container, at its version, or of
+// another node, unversioned — or false when the editor opens nothing there.
 func (c documentContent) readContainer(uuid string, tab domain.Tab) (protocol.DocumentContent, bool) {
 	if err := c.sp.Editor.Open(uuid); err != nil {
 		return protocol.DocumentContent{}, false
 	}
 	blocks, ok := c.sp.Editor.FrontendBlocks(uuid)
-	if !ok || len(blocks) != 1 {
+	if !ok {
+		return protocol.DocumentContent{}, false
+	}
+	if c.sp.Editor.IsChat(uuid) {
+		content := protocol.DocumentContent{Mode: "wysiwyg", UUID: uuid, Kind: domain.ChatKind, Scroll: tab.Scroll, Blocks: blocks}
+		if chat, err := c.sp.Chats.Load(uuid); err == nil {
+			content.Name = chat.Name()
+		}
+		return content, true
+	}
+	if len(blocks) != 1 {
 		return protocol.DocumentContent{}, false
 	}
 	content := protocol.DocumentContent{

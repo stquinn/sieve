@@ -6,6 +6,11 @@
 //
 // It is told the CONTAINER the block lives in, because a reference to something
 // processed server-side is only fetchable relative to the container holding it.
+//
+// A renderer that offers an open intent (`onOpen`, reporting a target that
+// carries the address it opens and, optionally, `seek`, the text looked for
+// there) has it forwarded to the `open` callback this view was handed, as that
+// address and that text; the view knows no kind that offers one.
 
 import { SieveBlock } from '../contract/sieve-block.js'
 import { getBlockRenderer } from './block-renderers.js'
@@ -14,11 +19,18 @@ import { getLowlight, hastToHtml } from './highlighting.js'
 
 export class BlockRecordView {
   /** @type {string} */ #container
+  /** @type {((uri: string, seek?: string) => void)|null} */ #open
   /** @type {{destroy: () => void}|null} */ #renderer = null
 
-  /** @param {string} [container] the uuid of the container the block lives in */
-  constructor(container) {
+  /**
+   * @param {string} [container] the uuid of the container the block lives in
+   * @param {{open?: (uri: string, seek?: string) => void}} [intents] `open` is
+   *   told the address a drawn block asks to open, and the text it seeks there
+   *   when it names one; without it no block's open intent is heard
+   */
+  constructor(container, intents = {}) {
     this.#container = String(container || '')
+    this.#open = typeof intents.open === 'function' ? intents.open : null
   }
 
   /**
@@ -34,8 +46,22 @@ export class BlockRecordView {
     const renderer = new Renderer(new SieveBlock(kind, this.#resolved(attrs || {})), null, undefined, { readOnly: true })
     const dom = renderer.render()
     BlockRecordView.#writeOwnText(renderer, attrs || {})
+    this.#forwardOpen(renderer)
     this.#renderer = renderer
     return dom
+  }
+
+  /** @param {any} renderer */
+  #forwardOpen(renderer) {
+    const open = this.#open
+    if (!open || typeof renderer.onOpen !== 'function') return
+    renderer.onOpen((/** @type {{uri?: string, seek?: string}} */ target) => {
+      const uri = String((target && target.uri) || '')
+      const seek = String((target && target.seek) || '')
+      if (!uri) return
+      if (seek) open(uri, seek)
+      else open(uri)
+    })
   }
 
   /** Releases the renderer this view drew with. Idempotent. */

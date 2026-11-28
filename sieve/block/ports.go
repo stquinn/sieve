@@ -4,7 +4,6 @@ import (
 	"time"
 
 	"sieve/sieve/domain"
-	"sieve/store"
 )
 
 // Port interfaces are the contract block processors depend on. Concrete services
@@ -15,16 +14,22 @@ import (
 type DocumentsPort interface {
 	LoadByUUID(uuid string) (domain.Document, error)
 	Save(d domain.Document) (domain.Document, error)
-	// PageAssetAddress returns the absolute sieve://{uuid}/{key} address of the
-	// page asset fetched for rawURL when document uuid holds one, else empty.
-	PageAssetAddress(uuid, rawURL string) string
 }
 
 // AssetsPort is the binary-asset surface processors use. It carries both halves
 // of an asset's life: a kind that holds a file also has to read the bytes back to
 // hand them on.
+//
+// A file is kept for its owner, named by uuid, in whatever category the store
+// holds that owner; no caller chooses one.
 type AssetsPort interface {
-	Save(category store.Category, parentContext, assetID string, data []byte) (*domain.ImageAsset, error)
+	// Save keeps data as the asset assetKey of the container ownerUUID.
+	Save(ownerUUID, assetKey string, data []byte) (*domain.ImageAsset, error)
+	// OwnedKeys returns the key of every asset the container ownerUUID holds.
+	OwnedKeys(ownerUUID string) ([]string, error)
+	// PageAssetAddress returns the absolute sieve://{uuid}/{key} address of the
+	// page asset fetched for rawURL when container ownerUUID holds one, else empty.
+	PageAssetAddress(ownerUUID, rawURL string) string
 	ServeAssetData(docUUID, filename string) ([]byte, error)
 }
 

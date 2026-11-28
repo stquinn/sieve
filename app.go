@@ -202,6 +202,9 @@ func (a *App) startup(ctx context.Context) {
 	if a.ServiceProvider.Ink != nil {
 		a.ServiceProvider.Ink.Stop()
 	}
+	if a.ServiceProvider.ChatNamer != nil {
+		a.ServiceProvider.ChatNamer.Stop()
+	}
 
 	// ── One-time state migration: move settings/session to config/ ────────────
 	migrateStateFiles(
@@ -286,6 +289,9 @@ func (a *App) startup(ctx context.Context) {
 			logger.Warn("could not start ink", "err", err)
 		}
 	}
+	if a.ServiceProvider.ChatNamer != nil {
+		a.ServiceProvider.ChatNamer.Start()
+	}
 }
 
 func (a *App) beforeClose(ctx context.Context) bool {
@@ -338,6 +344,9 @@ func (a *App) Quit() {
 	}
 	if a.ServiceProvider.Ink != nil {
 		a.ServiceProvider.Ink.Stop()
+	}
+	if a.ServiceProvider.ChatNamer != nil {
+		a.ServiceProvider.ChatNamer.Stop()
 	}
 	runtime.Quit(a.ctx)
 	go func() {

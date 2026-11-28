@@ -136,7 +136,7 @@ func TestAIBlock_UndereferenceableAttachment_RendersUnavailableAndStillAsks(t *t
 	p := NewAIBlockProcessor(svc)
 	blk := askAbout(chainDocUUID, "ab-1", "still answerable?", "",
 		domain.Attachment{URI: "sieve://not-a-uuid", Title: "Some Block"})
-	_, _, question := p.buildPrompt(&blk, block.DocView{UUID: chainDocUUID})
+	_, _, question := p.buildPrompt(&blk, block.DocView{ContainerAddressing: block.ContainerAddressing{UUID: chainDocUUID}})
 
 	if !strings.Contains(question, "still answerable?") {
 		t.Fatalf("the question survived nothing:\n%s", question)
@@ -158,7 +158,7 @@ func TestAIBlock_NoAttachments_PromptUnchanged(t *testing.T) {
 
 	p := NewAIBlockProcessor(block.BlockServices{})
 	blk := askAbout(chainDocUUID, "ab-1", "plain question?", "")
-	_, _, question := p.buildPrompt(&blk, block.DocView{UUID: chainDocUUID})
+	_, _, question := p.buildPrompt(&blk, block.DocView{ContainerAddressing: block.ContainerAddressing{UUID: chainDocUUID}})
 
 	if strings.Contains(question, "ATTACHED") {
 		t.Fatalf("an attachment-less turn grew a section:\n%s", question)

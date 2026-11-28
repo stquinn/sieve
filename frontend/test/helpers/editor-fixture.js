@@ -59,6 +59,7 @@ export const schema = new Schema({
     // a generic sieve atom (e.g. sieve-code), and the ai-block follow-up atom
     'sieve-code': sieveAtom('code'),
     'sieve-ai-block': sieveAtom('ai-block'),
+    'sieve-reference': sieveAtom('reference'),
     // a sieve CONTAINER: a non-atom block whose body holds blocks
     'sieve-web-clip': {
       group: 'block', content: 'block+',
@@ -154,6 +155,7 @@ export const build = {
   proseGroup: (id, texts) => n.proseGroup.create(id ? { id } : null,
     (texts || ['one', 'two']).map((s) => n.paragraph.create(null, t(s)))),
   webClip: (id, text) => n['sieve-web-clip'].create({ id }, n.paragraph.create(null, t(text || 'body'))),
+  reference: (id) => n['sieve-reference'].create({ id, kind: 'reference', serialisedForm: '' }),
   aiBlock: (id, ref) => n['sieve-ai-block'].create({ id, kind: 'ai-block', serialisedForm: '', ref: ref || '' }),
   br: () => n.hardBreak.create(),
   // A paragraph over arbitrary inline content — the builder a break needs, since

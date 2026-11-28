@@ -112,6 +112,15 @@ func (reg Registry) Mount(r chi.Router) {
 				broadcast.Invalidate(protocol.TopicNotes)
 			},
 		},
+		&ChatHandler{
+			ServiceProvider:      sp,
+			Tmpl:                 tmpl,
+			EmitContainerDeleted: broadcast.ContainerDeleted,
+			EmitSessionChanged: func() {
+				broadcast.Invalidate(protocol.TopicSession)
+			},
+			EmitChatsChanged: broadcast.ChatsChanged,
+		},
 		NewWsHandler(sp, broadcast, reg.WSToken),
 		&LibraryHandler{
 			Tmpl:            tmpl,

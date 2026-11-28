@@ -36,6 +36,17 @@ func (p *ReferenceProcessor) maxHeldBytes() int {
 	return p.svc.State.LoadSettings().AttachmentCeilingBytes()
 }
 
+// ReferenceDisplayQuote is the one value of a reference's `displayAs` attr: the
+// reference is drawn as a blockquote of its cached quote text in place of its
+// chip. displayAs says how a reference is DRAWN and nothing about what it is;
+// an absent or other value draws the chip.
+const ReferenceDisplayQuote = "quote"
+
+// ReferenceQuoteKey is the cache key holding the text a reader quoted from the
+// target: written by whoever mints the quote, never by a resolve, because it is
+// what the reader quoted and not what the target says now.
+const ReferenceQuoteKey = "quote"
+
 // maxMaterialisedTextBytes caps the held file this kind will hand over as
 // content for another block to be built from. It sits far below the hold ceiling
 // because extracted content becomes editable document content; past this the
@@ -46,9 +57,11 @@ const maxMaterialisedTextBytes = 256 * 1024
 // file the document is about, or POINTS at something else Sieve can name.
 //
 // TWO NAMESPACES. Root attrs are facts about the POINTING — `uri`, `rel`,
-// `status`, `error`, the timestamps. The `cache` attr is a map of facts about
-// the POINTED-AT — `title`, `summary`, `mime`, `bytes`, stamped `cachedAt` —
-// whatever the last resolve (or the mint that had the bytes in hand) returned.
+// `displayAs`, `status`, `error`, the timestamps. The `cache` attr is a map of
+// facts about the POINTED-AT — `title`, `summary`, `mime`, `bytes`, stamped
+// `cachedAt` — whatever the last resolve (or the mint that had the bytes in
+// hand) returned. A quote's cache also holds `quote` (ReferenceQuoteKey), the
+// text the reader quoted, which its minter writes and no resolve touches.
 // Without the split, caching a target's attrs would make a reference
 // indistinguishable from the thing it points at. Legacy blocks carrying face
 // attrs at root fold under `cache` via block.ReferenceMigrator.FoldFace — the
@@ -94,7 +107,8 @@ func (p *ReferenceProcessor) InitAttrs(id string, overrides map[string]interface
 		"id":                id,
 		"uri":               "", // the one address, whether this block holds or points
 		"rel":               "", // the authored role a consumer classifies on (block.RelTarget/RelAttach); empty falls through to the address rule
-		"status":            block.BlockStatusPending,
+		"displayAs":         "", // how the reference is drawn: ReferenceDisplayQuote, or empty for the chip
+		"status":           block.BlockStatusPending,
 		"createdAt":         time.Now().UTC().Format(time.RFC3339),
 		"completedAt":       "",
 		"error":             "",
@@ -773,8 +787,10 @@ func (p *ReferenceProcessor) storedBytes(attrs map[string]interface{}) (int64, b
 // BuildContext contributes the same facts for both halves of the kind: what this
 // is, where it lives, and what it says. It states facts and never instructs the
 // model to fetch anything. A held file carries one fact more — the File tag, the
-// path its bytes are at, which is the only name that opens.
-func (p *ReferenceProcessor) BuildContext(blk domain.SieveBlock, doc block.DocView, _ map[string]bool) block.AIContext {
+// path its bytes are at, which is the only name that opens. A reference holding
+// quoted text carries it as the block.FocusTag, which unions with the focus
+// other kinds state.
+func (p *ReferenceProcessor) BuildContext(blk domain.SieveBlock, doc block.ContainerView, _ map[string]bool) block.AIContext {
 	uri := p.uri(blk.Attrs)
 	if uri == "" {
 		return block.AIContext{}
@@ -785,12 +801,19 @@ func (p *ReferenceProcessor) BuildContext(blk domain.SieveBlock, doc block.DocVi
 	// here.
 	ctx := doc.NodeContext(blk.ID, "Reference: "+p.label(blk.Attrs, uri)+"\n")
 	ctx.Tags = []block.Tag{
-		{Label: "File", Values: []string{p.heldFilePath(blk.Attrs, doc.UUID)}},
+		{Label: "File", Values: []string{p.heldFilePath(blk.Attrs, doc.Container())}},
 		{Label: "Address", Values: []string{uri}},
 		{Label: "Type", Values: []string{p.typeLine(blk.Attrs)}},
 		{Label: "Summary", Values: []string{summary}},
+		{Label: block.FocusTag, Values: []string{p.quoted(blk.Attrs)}},
 	}
 	return ctx
+}
+
+// quoted is the text a reader quoted from the target, "" when the reference
+// holds none.
+func (p *ReferenceProcessor) quoted(attrs map[string]interface{}) string {
+	return strings.TrimSpace(p.faceStr(attrs, ReferenceQuoteKey))
 }
 
 // heldFilePath is where a held file's bytes are on disk, as the CLI can open

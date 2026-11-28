@@ -16,7 +16,7 @@ import { PageHeading } from '../../renderers/page-heading.js'
 import { PageNames } from '../../renderers/page-names.js'
 import { QuestionListView } from '../../renderers/question-list-view.js'
 import { SyncingPanel } from '../../renderers/syncing-panel.js'
-import { ActionStatus } from './action-status.js'
+import { ActionStatus } from '../../renderers/action-status.js'
 import { InkPlace } from './ink-place.js'
 import { NotePager } from './note-pager.js'
 import { PageSurface } from './page-surface.js'
@@ -76,7 +76,7 @@ export class TranscriptSurface extends AbstractSurface {
 
   .ink-transcript__notice { flex: 1 1 auto; }
 
-  .ink-transcript__bar .ink-page__status { color: var(--theme-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .ink-transcript__bar .action-status { color: var(--theme-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
   .ink-transcript__notice[data-tone="warn"] { color: var(--theme-accentYellow); }
 

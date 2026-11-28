@@ -1793,7 +1793,7 @@ export class WysiwygSurface extends AbstractSurface {
       const held = this.#findNodeById(ed, id)
       if (!node) { if (held) this.#removeBlockNode(id); continue }
       if (!WysiwygSurface.#isBody(node)) continue
-      if (!held) { this.#placeBlock(node, provider.getOrder().indexOf(id)); continue }
+      if (!held) { this.#placeBlock(node, this.#bodyOrder(provider).indexOf(id)); continue }
       const heldKind = (held.node.attrs && held.node.attrs.kind) || ''
       // A REPLACED block is the host's whole truth for that slot, and a block
       // that changed kind cannot be patched into the one the doc holds. Both
@@ -1856,15 +1856,17 @@ export class WysiwygSurface extends AbstractSurface {
    *
    * A reference declaring a `rel` is a QUESTION ELEMENT wearing its role stamp:
    * it belongs to the question some block IS, not to the text being written, so
-   * no surface paints one and the observer never sees it. A document's own
-   * references carry an empty `rel`, and every other kind is body whatever it
-   * holds.
+   * no surface paints one and the observer never sees it — unless it declares
+   * how it is drawn (`displayAs`), which makes it a block of the text like any
+   * other. A document's own references carry an empty `rel`, and every other
+   * kind is body whatever it holds.
    * @param {{kind: string, attrs?: Record<string, any>}|null} node
    * @returns {boolean}
    */
   static #isBody(node) {
     if (!node) return false
-    return !(node.kind === 'reference' && !!(node.attrs && node.attrs.rel))
+    const attrs = node.attrs || {}
+    return !(node.kind === 'reference' && !!attrs.rel && !attrs.displayAs)
   }
 
   /** The first node carrying this id, at any depth, or null.
@@ -1879,11 +1881,12 @@ export class WysiwygSurface extends AbstractSurface {
     return hit
   }
 
-  /** Places a block the container holds but this doc does not, at the container
-   *  position it occupies — a TRACKED transaction, so it is one undoable step,
-   *  which also consumes the anchor a paste of this block left waiting.
+  /** Places a block the container holds but this doc does not, at the position
+   *  it occupies among the container's body blocks — a TRACKED transaction, so
+   *  it is one undoable step, which also consumes the anchor a paste of this
+   *  block left waiting.
    *  @param {{id: string, kind: string, attrs: Record<string, any>}} node
-   *  @param {number} index the block's position in the container */
+   *  @param {number} index the block's position in the container's body order */
   #placeBlock(node, index) {
     var self = this
     var ed = /** @type {any} */ (this.editorPane)
@@ -1893,7 +1896,7 @@ export class WysiwygSurface extends AbstractSurface {
     var content = this.#blockToNodes(ed, blk).map(function (n) { return n.toJSON() })
     if (!content.length) return
 
-    // Go's index is the CONTAINER's; a negative index appends.
+    // The index counts the container's body blocks, the ones this doc holds; a negative index appends.
     var at = index >= 0 ? this.#docPosForBlockIndex(ed, index) : ed.state.doc.content.size
     var anchor = this.#pendingAnchors.get(node.id) || null
     this.#pendingAnchors.delete(node.id)

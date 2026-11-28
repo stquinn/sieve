@@ -26,6 +26,17 @@ type session interface {
 	// ErrNotDocument.
 	document() (*block.ShadowDocument, error)
 
+	// jobs is what the jobs of the session's blocks run against. A session that
+	// holds no jobs answers the error a document verb asked of it answers.
+	jobs() (block.JobHolder, error)
+
+	// admitRetry reports why the job of block id may not be run again, or nil.
+	admitRetry(id string) error
+
+	// save writes what the session holds to its store; reason names the write in
+	// the log. A session that holds no jobs writes nothing.
+	save(es *EditorService, reason string) error
+
 	// blocks is what the session holds, as copies.
 	blocks() []domain.SieveBlock
 
@@ -43,6 +54,14 @@ type documentSession struct {
 }
 
 func (d documentSession) document() (*block.ShadowDocument, error) { return d.shadow, nil }
+
+func (d documentSession) jobs() (block.JobHolder, error) { return d.shadow, nil }
+
+func (d documentSession) admitRetry(string) error { return nil }
+
+func (d documentSession) save(es *EditorService, reason string) error {
+	return es.flushShadow(d.shadow, reason)
+}
 
 func (d documentSession) blocks() []domain.SieveBlock { return d.shadow.SnapshotBlocks() }
 
@@ -65,6 +84,35 @@ func (d documentSession) reload(es *EditorService) error {
 	return nil
 }
 
+// chatSession is a chat open for asking: a ShadowChat, saved through
+// ChatService when an exchange is asked, when a job is claimed or settles, and
+// on close. It has no autosave.
+type chatSession struct {
+	shadow *block.ShadowChat
+}
+
+func (c chatSession) document() (*block.ShadowDocument, error) {
+	return nil, fmt.Errorf("uuid %q is a chat, %w", c.shadow.UUID, ErrNotDocument)
+}
+
+func (c chatSession) jobs() (block.JobHolder, error) { return c.shadow, nil }
+
+func (c chatSession) admitRetry(id string) error { return c.shadow.AdmitRetry(id) }
+
+func (c chatSession) save(es *EditorService, reason string) error {
+	return es.saveChat(c.shadow, reason)
+}
+
+func (c chatSession) blocks() []domain.SieveBlock { return c.shadow.SnapshotBlocks() }
+
+// close saves the chat, so an answer a running job has written so far is kept.
+func (c chatSession) close(es *EditorService, reason string) {
+	_ = es.saveChat(c.shadow, reason)
+}
+
+// reload adopts nothing: a chat changes only through its open session.
+func (c chatSession) reload(*EditorService) error { return nil }
+
 // containerSession is a block container open for reading. Its one block has the
 // container's uuid for its id. Closing it writes nothing.
 type containerSession struct {
@@ -75,6 +123,18 @@ type containerSession struct {
 func (c *containerSession) document() (*block.ShadowDocument, error) {
 	return nil, fmt.Errorf("uuid %q is a block container, %w", c.uuid(), ErrNotDocument)
 }
+
+func (c *containerSession) jobs() (block.JobHolder, error) {
+	_, err := c.document()
+	return nil, err
+}
+
+func (c *containerSession) admitRetry(string) error {
+	_, err := c.document()
+	return err
+}
+
+func (c *containerSession) save(*EditorService, string) error { return nil }
 
 func (c *containerSession) blocks() []domain.SieveBlock {
 	c.mu.Lock()
@@ -136,6 +196,18 @@ func (n *nodeSession) document() (*block.ShadowDocument, error) {
 	defer n.mu.Unlock()
 	return nil, fmt.Errorf("uuid %q is a %s node, %w", n.blk.ID, n.blk.Kind, ErrNotDocument)
 }
+
+func (n *nodeSession) jobs() (block.JobHolder, error) {
+	_, err := n.document()
+	return nil, err
+}
+
+func (n *nodeSession) admitRetry(string) error {
+	_, err := n.document()
+	return err
+}
+
+func (n *nodeSession) save(*EditorService, string) error { return nil }
 
 func (n *nodeSession) blocks() []domain.SieveBlock {
 	n.mu.Lock()

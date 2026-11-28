@@ -93,8 +93,9 @@ func DocumentFromContext(ctx context.Context) string {
 // the content types it takes.
 type Server struct {
 	documents    *services.DocumentService
-	nodes        NodeResolver  // address → NodeDescriptor; the concrete Router is injected at the root
-	finder       SearchService // criteria → hits; the same Router
+	assets       *services.AssetService // keeps fetch_page's page for the calling document
+	nodes        NodeResolver           // address → NodeDescriptor; the concrete Router is injected at the root
+	finder       SearchService          // criteria → hits; the same Router
 	linkPreview  *services.LinkPreviewService
 	fetchTimeout time.Duration
 	audit        bodyReadAuditor                      // every body read, recorded at one place
@@ -114,14 +115,15 @@ type Server struct {
 // pageFetchTimeout is fetch_page's deadline for retrieving one page.
 const pageFetchTimeout = 15 * time.Second
 
-// NewServer builds the Sieve MCP over the document service, the node resolver,
+// NewServer builds the Sieve MCP over the document and asset services, the node resolver,
 // the search service and the link-preview service fetch_page retrieves pages
 // through, registers the verbs, and prepares the streamable HTTP handler. The
 // base URL is not known yet (the listener binds after construction) —
 // SetBaseURL supplies it.
-func NewServer(documents *services.DocumentService, nodes NodeResolver, search SearchService, linkPreview *services.LinkPreviewService) *Server {
+func NewServer(documents *services.DocumentService, assets *services.AssetService, nodes NodeResolver, search SearchService, linkPreview *services.LinkPreviewService) *Server {
 	s := &Server{
 		documents:    documents,
+		assets:       assets,
 		nodes:        nodes,
 		finder:       search,
 		linkPreview:  linkPreview,
@@ -139,7 +141,7 @@ func NewServer(documents *services.DocumentService, nodes NodeResolver, search S
 	mcpsdk.AddTool(sdk, &mcpsdk.Tool{
 		Name: s.readVerb("search"),
 		Description: "Search the knowledge base by a case-insensitive substring matched against names, summaries and tags — never bodies. " +
-			"Finds filed notes (kind \"note\"), unfiled buffers (kind \"buffer\"), notebooks written on a SieveInk device (kind \"digital-note\"; found by name, summary and keywords) and the Live view while it exists (kind \"ink-live\"; found by name). " +
+			"Finds filed notes (kind \"note\"), unfiled buffers (kind \"buffer\"), notebooks written on a SieveInk device (kind \"digital-note\"; found by name, summary and keywords), chats (kind \"chat\"; found by name, summary and keywords, its name being its title or else the opening words of its first question) and the Live view while it exists (kind \"ink-live\"; found by name). " +
 			"A buffer has no summary or tags, so it is found by its name alone. " +
 			"An empty query lists everything. Returns metadata only (never bodies); each hit is named by its address (uri), which get_meta, get_note and get_by_uri take as given. " +
 			"Optionally restrict to a folder, which leaves out everything but filed notes, as nothing else has one.",

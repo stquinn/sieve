@@ -99,29 +99,30 @@ func NewWsHandler(sp *sieve.ServiceProvider, broadcast *WorkspaceBroadcast, toke
 	// listed here, so the token entry beside it can never come back.
 	h.upgrader.Subprotocols = []string{protocol.WSSubprotocol}
 	h.documentFrames = map[string]frameHandler{
-		protocol.TypePing:               h.handlePing,
-		protocol.TypeDocUpdate:          h.handleDocUpdate,
-		protocol.TypeFlush:              h.handleFlush,
-		protocol.TypeEnterMarkdown:      h.handleEnterMarkdown,
-		protocol.TypeEnterWysiwyg:       h.handleEnterWysiwyg,
-		protocol.TypeRetryBlockJob:      h.handleRetryBlockJob,
-		protocol.TypeExtract:            h.handleExtract,
-		protocol.TypeBlockOp:            h.handleBlockOp,
-		protocol.TypeLoad:               h.handleLoad,
-		protocol.TypePaste:              h.handlePaste,
-		protocol.TypeDetectExtractions:  h.handleDetectExtractions,
-		protocol.TypeExport:             h.handleExport,
-		protocol.TypeFocus:              h.handleFocus,
-		protocol.TypeTextReplace:        h.handleTextReplace,
-		protocol.TypeFeatureControl:     h.handleDocumentFeatureControl,
-		protocol.TypeSetPresenting:      h.handleSetPresenting,
-		protocol.TypeInkPage:            h.handleInkPage,
-		protocol.TypeInkKeepDrawing:     h.handleInkKeepDrawing,
-		protocol.TypeInkOpenOnTablet:    h.handleInkOpenOnTablet,
+		protocol.TypePing:                  h.handlePing,
+		protocol.TypeDocUpdate:             h.handleDocUpdate,
+		protocol.TypeFlush:                 h.handleFlush,
+		protocol.TypeEnterMarkdown:         h.handleEnterMarkdown,
+		protocol.TypeEnterWysiwyg:          h.handleEnterWysiwyg,
+		protocol.TypeRetryBlockJob:         h.handleRetryBlockJob,
+		protocol.TypeExtract:               h.handleExtract,
+		protocol.TypeBlockOp:               h.handleBlockOp,
+		protocol.TypeLoad:                  h.handleLoad,
+		protocol.TypePaste:                 h.handlePaste,
+		protocol.TypeDetectExtractions:     h.handleDetectExtractions,
+		protocol.TypeExport:                h.handleExport,
+		protocol.TypeFocus:                 h.handleFocus,
+		protocol.TypeTextReplace:           h.handleTextReplace,
+		protocol.TypeFeatureControl:        h.handleDocumentFeatureControl,
+		protocol.TypeSetPresenting:         h.handleSetPresenting,
+		protocol.TypeInkPage:               h.handleInkPage,
+		protocol.TypeInkKeepDrawing:        h.handleInkKeepDrawing,
+		protocol.TypeInkOpenOnTablet:       h.handleInkOpenOnTablet,
 		protocol.TypeInkTranscript:         h.handleInkTranscript,
-		protocol.TypeInkTranscribePage:        h.handleInkTranscribePage,
+		protocol.TypeInkTranscribePage:     h.handleInkTranscribePage,
 		protocol.TypeInkTranscriptDocument: h.handleInkTranscriptDocument,
-		protocol.TypeInkDescribe:        h.handleInkDescribe,
+		protocol.TypeInkDescribe:           h.handleInkDescribe,
+		protocol.TypeChatAppendExchange:    h.handleChatAppendExchange,
 	}
 	h.workspaceFrames = map[string]frameHandler{
 		protocol.TypePing:           h.handlePing,
@@ -165,7 +166,8 @@ func (h *WsHandler) isMutating(frameType string) bool {
 	switch frameType {
 	case protocol.TypeDocUpdate, protocol.TypeBlockOp, protocol.TypeExtract,
 		protocol.TypeRetryBlockJob, protocol.TypeEnterMarkdown, protocol.TypeEnterWysiwyg,
-		protocol.TypePaste, protocol.TypeTextReplace, protocol.TypeFeatureControl:
+		protocol.TypePaste, protocol.TypeTextReplace, protocol.TypeFeatureControl,
+		protocol.TypeChatAppendExchange:
 		return true
 	default:
 		return false
@@ -843,6 +845,8 @@ func (h *WsHandler) updateSessionTab(uuid string, change func(*domain.Tab)) {
 	_ = h.ServiceProvider.State.SaveSession(session)
 }
 
+// handleRetryBlockJob runs one block's job again, in whatever container this channel is bound to.
+// A retry the container refuses is answered with an error frame.
 func (h *WsHandler) handleRetryBlockJob(f inboundFrame) {
 	var msg protocol.RetryBlockJobFrame
 	if err := json.Unmarshal(f.raw, &msg); err != nil {
@@ -853,21 +857,28 @@ func (h *WsHandler) handleRetryBlockJob(f inboundFrame) {
 		h.refuse(f, protocol.TypeRetryBlockJob, errors.New("no block id"))
 		return
 	}
-	// Reset both status and createdAt. The DISPATCHED notifyBlockUpdated that fires
-	// immediately will carry the fresh createdAt, so the frontend's isJobStale()
-	// won't fire and re-show "interrupted" instead of the spinner.
-	if err := h.ServiceProvider.Editor.UpdateBlock(f.uuid, domain.SieveBlock{
-		ID: msg.ID,
-		Attrs: map[string]interface{}{
-			"status":    block.BlockStatusPending,
-			"createdAt": time.Now().UTC().Format(time.RFC3339),
-			"error":     "",
-		},
-	}); err != nil {
-		logger.Warn("ws: retry-block-job dropped", "uuid", f.uuid, "block", msg.ID, "err", err)
+	if err := h.ServiceProvider.Editor.RetryBlockJob(f.uuid, msg.ID); err != nil {
+		logger.Warn("ws: retry-block-job refused", "uuid", f.uuid, "block", msg.ID, "err", err)
+		f.reply(protocol.NewErrorFrame(fmt.Sprintf("%s refused: %v", protocol.TypeRetryBlockJob, err)))
+	}
+}
+
+// handleChatAppendExchange asks a question in this channel's chat. The exchange reaches the client
+// as the created block the editor announces, so the handler answers only a refusal.
+func (h *WsHandler) handleChatAppendExchange(f inboundFrame) {
+	var msg protocol.ChatAppendExchangeFrame
+	if err := json.Unmarshal(f.raw, &msg); err != nil {
+		h.refuse(f, protocol.TypeChatAppendExchange, err)
 		return
 	}
-	h.ServiceProvider.Editor.DispatchJobIfNeeded(f.uuid, msg.ID)
+	question := make([]domain.SieveBlock, len(msg.Question))
+	for i, b := range msg.Question {
+		question[i] = b.SieveBlock()
+	}
+	if _, err := h.ServiceProvider.Editor.AppendExchange(f.uuid, question); err != nil {
+		logger.Warn("ws: chat-append-exchange refused", "uuid", f.uuid, "err", err)
+		f.reply(protocol.NewErrorFrame(fmt.Sprintf("%s refused: %v", protocol.TypeChatAppendExchange, err)))
+	}
 }
 
 // OnBlockCreated implements sieve.BlockLifecycleListener.

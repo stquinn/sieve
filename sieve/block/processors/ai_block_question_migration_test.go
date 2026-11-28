@@ -44,10 +44,11 @@ func migrationDocView(t *testing.T, blocks []domain.SieveBlock) block.DocView {
 	if err != nil {
 		t.Fatalf("seed serialize: %v", err)
 	}
-	_, view, ok := block.NewShadow(migrationDocUUID, body, codec, 0, nil).SnapshotForJob(migrationProseID)
+	_, snap, ok := block.NewShadow(migrationDocUUID, body, codec, 0, nil).SnapshotForJob(migrationProseID)
 	if !ok {
 		t.Fatal("SnapshotForJob: seed block not found")
 	}
+	view := snap.(block.DocView)
 	view.Blocks = blocks
 	return view
 }
@@ -101,7 +102,7 @@ var migrationCases = []migrationCase{
 		blockMarker(1, 1, block.WholeDocumentKind) + documentHeader(migrationDocUUID) +
 			"<!--s:" + migrationProseID + "-->\nthe grass is green\n<!--/s:" + migrationProseID + "-->\n\n" +
 			"<!--s:" + migrationProseTwo + "-->\nthe sky is blue\n<!--/s:" + migrationProseTwo + "-->"},
-	{"detached", "", "ASK", "QUESTION ABOUT: \n", ""},
+	{"detached", "", "ASK", "", ""},
 	{"one block", migrationProseID, "ASK", "QUESTION ABOUT: " + leafAddress(migrationDocUUID, migrationProseID) + "\n",
 		blockMarker(1, 1, "prose") + addressHeader(migrationDocUUID, migrationProseID) + "the grass is green"},
 	{"many blocks", migrationProseID + "," + migrationProseTwo, "ASK",

@@ -1339,7 +1339,7 @@ func TestMetaPanel_ShowsANotebooksMetadata(t *testing.T) {
 	unnamed := panel(note, "history")
 	for _, want := range []string{row("Name", "Ideas"), row("Keywords", "—"), row("Categories", "—"), row("Pages", "1"),
 		row("Synced to", fmt.Sprintf("seq %d", len(records))), row("Described as of", "not yet named"), note, button,
-		">Refresh name and summary<", "data-notebook-describe-status", refresh, `data-active-tab="meta"`} {
+		">Refresh name and summary<", "data-meta-name-now-status", refresh, `data-active-tab="meta"`} {
 		if !strings.Contains(unnamed, want) {
 			t.Errorf("an unnamed notebook's panel lacks %q:\n%s", want, unnamed)
 		}
@@ -1358,7 +1358,7 @@ func TestMetaPanel_ShowsANotebooksMetadata(t *testing.T) {
 	}
 	named := panel(note, "meta")
 	for _, want := range []string{row("Name", "Kitchen extension planning"), row("Tablet title", "Ideas"), "Plans.",
-		">extension<", ">budget<", "data-notebook-categories", ">Home<", row("Described as of", "seq 1")} {
+		">extension<", ">budget<", "data-meta-categories", ">Home<", row("Described as of", "seq 1")} {
 		if !strings.Contains(named, want) {
 			t.Errorf("a named notebook's panel lacks %q:\n%s", want, named)
 		}

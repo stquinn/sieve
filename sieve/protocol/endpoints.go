@@ -69,6 +69,23 @@ type TabsCloseRequest struct {
 	IDs []string `json:"ids" doc:"the tabs to close"`
 }
 
+// ChatRenameRequest names a chat by hand: {id} is the chat. A name is kept by every later
+// description, which describes the chat's summary, keywords and categories and leaves its name; a
+// blank one hands naming back, the chat called by the opening words of its first question until it
+// is next described. The tab and the Chats row follow on the chats and session topics. 204 is the
+// chat renamed; 404 is no chat, with a plain-text body.
+type ChatRenameRequest struct {
+	Name string `json:"name" doc:"the chat's new name, trimmed; empty hands naming back"`
+}
+
+// ChatDescribeRequest names a chat now: {id} is the chat, and its name (unless a person named it),
+// summary, keywords and categories are described again from its answered exchanges, whether or
+// not it has grown since it was last described. 204 is the job submitted, or one already naming
+// the chat. Otherwise the body is plain text a person can be shown: 404 for no chat, 409 when
+// nothing can name it now (no AI is configured, or the chat has no answer yet), 503 when chats are
+// unavailable. The request has no body.
+type ChatDescribeRequest struct{}
+
 // InkPageExportRequest reads one page of a synced Digital Note in the export shape of
 // docs/ink-contract.md §4.2: {uuid} is the note's block container and {page} the page's index
 // among the pages present, from 0. An unknown container, a container that is not a Digital Note

@@ -11,6 +11,19 @@
 // what is typed into the draft container as blocks, so this asks the container
 // rather than the editing surface: the walk sees the same content whatever was
 // doing the typing, and knows nothing about ProseMirror.
+//
+// A DRAFT BELONGS TO A PLACE. The host names the place the message is being
+// written for (`setPlace`), and each place keeps its own draft, in memory only.
+// Changing place keeps the draft left behind, its undo history excepted, and the
+// place returned to presents its own again. The place named '' is the one a host
+// that names none writes in.
+//
+// UP RECALLS WHAT WAS ASKED. The host says where the questions already asked are
+// read from (`recallFrom`), and they are read at each Up or Down that needs them;
+// nothing is kept of what was sent from here. In an empty draft a bare Up puts
+// back the last question asked, Up again the one before; Down comes forward, and
+// past the newest returns to an empty draft. A recalled question that is edited
+// is the draft from then on, and Up and Down are its caret keys again.
 
 import { InMemoryContainerProvider } from '../container/in-memory-container-provider.js'
 import { ComposerEditor } from '../lens/document-editor/composer/composer-editor.js'
@@ -25,6 +38,8 @@ import { PanelPlacement } from './trigger-host.js'
  */
 const WHOLE_FENCE = /^```([^\s`]*)[ \t]*\r?\n([\s\S]*?)\r?\n?```$/
 
+/** @typedef {import('../renderers/question-list.js').QuestionElement} QuestionElement */
+
 /**
  * What every draft's lens is built with. Each is OPTIONAL and each may be
  * absent as `null`: a host that has no such service says so, and the lens's
@@ -35,17 +50,93 @@ const WHOLE_FENCE = /^```([^\s`]*)[ \t]*\r?\n([\s\S]*?)\r?\n?```$/
  * @property {object|null} [commandService]  the `/` picker's peer
  */
 
+/**
+ * One place's draft, and where a recall through the questions asked stands in
+ * it. Whether the draft is empty, and whether a recalled one has been edited,
+ * are read from the draft container, so a draft holding only an attachment is
+ * not empty.
+ */
+class DraftPlace {
+  /** @type {InMemoryContainerProvider} the message being written */ #draft = new InMemoryContainerProvider()
+  /** @type {number} which question asked the draft is a recall of, oldest first; -1 while it is none */ #at = -1
+  /** @type {string} the recalled draft's content as it was presented */ #shown = ''
+
+  /** @returns {InMemoryContainerProvider} */
+  get draft() { return this.#draft }
+
+  /** Starts another draft. */
+  retire() {
+    this.#draft = new InMemoryContainerProvider()
+    this.#at = -1
+  }
+
+  /** Records the recalled draft's content as its lens now presents it; an edit
+   *  that changes it ends the recall. */
+  markShown() { this.#shown = this.#content() }
+
+  /**
+   * Steps through the questions asked: -1 to an older one, 1 to a newer one, and
+   * 1 past the newest back to an empty draft. Only an empty draft starts a
+   * recall, and only Up starts one. A recalled draft that has been edited is the
+   * draft from then on: the step is not taken, and the key is the caret's. Up on
+   * the oldest is taken and stays there.
+   * @param {-1|1} step
+   * @param {() => ReadonlyArray<ReadonlyArray<QuestionElement>>} asked the
+   *   questions asked, oldest first, read only when a step needs them
+   * @returns {boolean} whether the step was taken, which is whether the key is claimed
+   */
+  recall(step, asked) {
+    if (this.#at >= 0 && this.#content() !== this.#shown) this.#at = -1
+    if (this.#at < 0) {
+      if (step > 0 || ComposerMount.elementsOf(this.#draft).length) return false
+      const questions = asked()
+      if (questions.length === 0) return false
+      this.#show(questions, questions.length - 1)
+      return true
+    }
+    const questions = asked()
+    const at = Math.min(this.#at, questions.length - 1)
+    if (at < 0) this.retire()
+    else if (step < 0) { if (at > 0) this.#show(questions, at - 1) }
+    else if (at < questions.length - 1) this.#show(questions, at + 1)
+    else this.retire()
+    return true
+  }
+
+  /** @returns {string} what the draft says, its block ids aside */
+  #content() {
+    return JSON.stringify(ComposerMount.elementsOf(this.#draft).map((element) => {
+      const { id: _id, ...attrs } = element.attrs
+      return [element.kind, attrs]
+    }))
+  }
+
+  /** @param {ReadonlyArray<ReadonlyArray<QuestionElement>>} questions @param {number} at */
+  #show(questions, at) {
+    this.#at = at
+    this.#draft = new InMemoryContainerProvider({
+      blocks: ComposerMount.blocksOf(questions[at]).map((block) => {
+        const id = Ident.mint()
+        return { id: id, kind: block.kind, attrs: Object.assign({}, block.attrs, { id: id }) }
+      }),
+    })
+  }
+}
+
 export class ComposerMount {
   /** @type {HTMLElement|null} the fixture the lens goes in (null → headless) */ #el
   /** @type {ComposerDependencies} what every draft's lens is built with */ #deps
-  /** @type {InMemoryContainerProvider|null} the live draft */ #provider = null
-  /** @type {ComposerEditor|null} the lens presenting it */ #editor = null
+  /** @type {Map<string, DraftPlace>} each place's draft */ #places = new Map()
+  /** @type {string} the place the message is being written for */ #place = ''
+  /** @type {ComposerEditor|null} the lens presenting the place's draft */ #editor = null
   /** @type {Array<() => void>} */ #submitListeners = []
   /** @type {Array<() => void>} */ #changeListeners = []
   /** @type {Array<(candidate: any) => void>} */ #mentionListeners = []
   /** @type {Array<(title: string) => void>} */ #detachListeners = []
   /** @type {Array<() => void>} */ #clearListeners = []
   /** @type {Array<() => void>} the live lens's subscriptions, dropped on reset */ #unsubs = []
+  /** @type {() => ReadonlyArray<ReadonlyArray<QuestionElement>>} the questions asked, oldest first */
+  #asked = () => []
 
   /**
    * @param {HTMLElement|null} el the element the composer is mounted into
@@ -59,24 +150,67 @@ export class ComposerMount {
   /** @returns {ComposerEditor|null} the live lens, or null before the first open */
   get editor() { return this.#editor }
 
-  /** @returns {InMemoryContainerProvider|null} the live draft's container */
-  get provider() { return this.#provider }
+  /** @returns {InMemoryContainerProvider|null} the current place's draft, null
+   *  while it has none */
+  get provider() {
+    const place = this.#places.get(this.#place)
+    return place ? place.draft : null
+  }
+
+  /** @returns {string} the place the message is being written for */
+  get place() { return this.#place }
 
   /**
-   * Brings a draft into being if there is not one already, and returns the lens
-   * presenting it. Idempotent: opening the panel a second time returns to the
-   * message that was being written, which is what "close keeps the draft" means.
+   * Makes `place` the one the message is being written for. The draft of the
+   * place left is kept, every pending edit in it; the lens presenting it is
+   * retired, and the next `open` presents the new place's draft.
+   * @param {string} place
+   */
+  setPlace(place) {
+    const next = String(place || '')
+    if (next === this.#place) return
+    if (this.#editor) this.#editor.flushSave()
+    this.#teardown()
+    this.#place = next
+  }
+
+  /**
+   * Says where Up reads the questions already asked from: `source` answers them,
+   * oldest first, each as the elements it was asked with, and is called at each
+   * Up or Down that needs them. Without one there is nothing to recall.
+   * @param {() => ReadonlyArray<ReadonlyArray<QuestionElement>>} source
+   */
+  recallFrom(source) {
+    this.#asked = source
+  }
+
+  /**
+   * Drops `place`'s draft. When it is the current place its lens is retired
+   * too, and the next `open` starts an empty draft.
+   * @param {string} place
+   */
+  forget(place) {
+    const key = String(place || '')
+    if (key === this.#place) this.#teardown()
+    this.#places.delete(key)
+  }
+
+  /**
+   * Presents the current place's draft, bringing one into being if the place has
+   * none, and returns the lens presenting it. Idempotent: opening the panel a
+   * second time returns to the message that was being written, which is what
+   * "close keeps the draft" means.
    * @returns {ComposerEditor|null} null when there is nowhere to mount
    */
   open() {
     if (this.#editor) return this.#editor
     if (!this.#el) return null
-    this.#provider = new InMemoryContainerProvider()
     // The picker is the panel's: pinned above its top edge at its full width,
     // not hung off a caret that sits at the bottom of the screen.
     const editor = new ComposerEditor(Ident.mint(), Object.assign({}, this.#deps, {
-      provider: this.#provider,
+      provider: this.#placeNow().draft,
       triggerPlacement: new PanelPlacement(),
+      recall: (/** @type {-1|1} */ step) => this.#recall(step),
     }))
     this.#unsubs = [
       editor.onSubmit(() => this.#notify(this.#submitListeners)),
@@ -112,10 +246,11 @@ export class ComposerMount {
     if (this.#editor) this.#editor.setCommandVerb(verb)
   }
 
-  /** Puts the caret in the message. */
-  focus() {
+  /** Puts the caret in the message: where it was, or at its end.
+   *  @param {'end'} [at] */
+  focus(at) {
     const pane = this.#editor && this.#editor.editorPane
-    if (pane) pane.commands.focus()
+    if (pane) pane.commands.focus(at)
   }
 
   /** @returns {boolean} whether the user is typing in this composer */
@@ -151,10 +286,9 @@ export class ComposerMount {
    */
   harvest() {
     const editor = this.#editor
-    const provider = this.#provider
-    if (!editor || !provider) return []
+    if (!editor) return []
     editor.flushSave()
-    return ComposerMount.elementsOf(provider)
+    return ComposerMount.elementsOf(this.#placeNow().draft)
   }
 
   /**
@@ -175,10 +309,33 @@ export class ComposerMount {
   }
 
   /**
-   * One draft block as one question element. A block that is WHOLLY a fenced
-   * code block becomes a code element carrying the source and the language the
-   * author tagged — they know what they typed, so nothing here guesses. Every
-   * other block is prose, and its markdown is what it is.
+   * THE WALK'S INVERSE: a question's elements as the draft blocks they are
+   * written as, in order and without ids. A code element is the prose block
+   * wholly fenced that it is harvested from; a reference is the block it is, its
+   * attrs as the element holds them. An element of any other kind is one a
+   * draft cannot hold, and it is left out.
+   * @param {ReadonlyArray<QuestionElement>} elements
+   * @returns {Array<{kind: string, attrs: Record<string, any>}>}
+   */
+  static blocksOf(elements) {
+    /** @type {Array<{kind: string, attrs: Record<string, any>}>} */
+    const blocks = []
+    for (const element of elements) {
+      const { id: _id, ...attrs } = element.attrs || {}
+      if (element.kind === 'prose') blocks.push({ kind: 'prose', attrs: { content: String(attrs.content || '') } })
+      else if (element.kind === 'code') blocks.push({ kind: 'prose', attrs: { content: '```' + String(attrs.language || '') + '\n' + String(attrs.source || '') + '\n```' } })
+      else if (element.kind === 'reference') blocks.push({ kind: 'reference', attrs: attrs })
+    }
+    return blocks
+  }
+
+  /**
+   * One draft block as one question element. A prose block that is WHOLLY a
+   * fenced code block becomes a code element carrying the source and the
+   * language the author tagged — they know what they typed, so nothing here
+   * guesses. Every other prose block is prose, and its markdown is what it is.
+   * A block of any other kind — a quote put into the draft — is the element it
+   * is, its attrs as the draft holds them.
    *
    * AN ATTACHMENT'S ID DOES NOT TRAVEL, alone among the elements: its reference
    * is minted afresh from the address and face the draft block holds, so what
@@ -191,6 +348,7 @@ export class ComposerMount {
     if (!node) return null
     const attached = QuestionList.attachmentOf(node)
     if (attached) return QuestionList.attachment(attached.uri, attached.title)
+    if (node.kind !== 'prose') return { kind: node.kind, attrs: Object.assign({}, node.attrs, { id: node.id }) }
     const content = String((node.attrs && node.attrs.content) || '').trim()
     if (!content) return null
     const fence = WHOLE_FENCE.exec(content)
@@ -201,10 +359,44 @@ export class ComposerMount {
     return { kind: 'code', attrs: attrs }
   }
 
+  /**
+   * Puts `element` into the draft as a block of its own: after the block the
+   * caret is in, before it when that block is an empty paragraph (so no empty
+   * line is left above it and the paragraph is where writing goes on), or last
+   * when the caret is in no block of the draft. The lens draws it where it lands
+   * and puts the caret in the block after it. The block is named here, as every
+   * block of a draft is.
+   * @param {import('../renderers/question-list.js').QuestionElement} element
+   */
+  insert(element) {
+    const editor = this.open()
+    if (editor) editor.flushSave()
+    const draft = this.#placeNow().draft
+    const caret = editor ? editor.getSelectionContext().blockId : null
+    draft.requestAddBlock(element.kind, Object.assign({}, element.attrs, { id: Ident.mint() }), this.#anchorFor(draft, caret))
+    this.#notify(this.#changeListeners)
+  }
+
+  /**
+   * What a block put in at the caret is anchored after.
+   * @param {InMemoryContainerProvider} draft @param {string|null|undefined} caret the block the caret is in
+   * @returns {string|null|undefined} a block id, null for the front, undefined to append
+   */
+  #anchorFor(draft, caret) {
+    const order = draft.getOrder()
+    const at = caret ? order.indexOf(caret) : -1
+    if (at < 0) return undefined
+    const block = draft.getBlock(/** @type {string} */ (caret))
+    const emptyParagraph = !!block && block.kind === 'prose' && !String((block.attrs || {}).content || '').trim()
+    if (!emptyParagraph) return caret
+    return at === 0 ? null : order[at - 1]
+  }
+
   /** Retires this draft and starts another: a fresh container, a fresh lens, no
-   *  undo history reaching back into a message already sent. */
+   *  undo history reaching back into the message retired. */
   reset() {
     this.#teardown()
+    this.#placeNow().retire()
     this.open()
   }
 
@@ -245,12 +437,42 @@ export class ComposerMount {
     return () => { this.#clearListeners = this.#clearListeners.filter((l) => l !== fn) }
   }
 
+  /** @returns {DraftPlace} the current place, brought into being if it was not */
+  #placeNow() {
+    let place = this.#places.get(this.#place)
+    if (!place) {
+      place = new DraftPlace()
+      this.#places.set(this.#place, place)
+    }
+    return place
+  }
+
+  /**
+   * The lens's Up or Down, put to the place: when it recalls a question, the
+   * recalled draft is presented in a lens of its own.
+   * @param {-1|1} step @returns {boolean} whether the key is claimed
+   */
+  #recall(step) {
+    if (this.#editor) this.#editor.flushSave()
+    const place = this.#placeNow()
+    const before = place.draft
+    if (!place.recall(step, this.#asked)) return false
+    if (place.draft !== before) {
+      this.#teardown()
+      const editor = this.open()
+      if (editor) editor.flushSave()
+      place.markShown()
+      this.focus('end')
+      this.#notify(this.#changeListeners)
+    }
+    return true
+  }
+
   #teardown() {
     for (const drop of this.#unsubs) drop()
     this.#unsubs = []
     if (this.#editor) this.#editor.destroy()
     this.#editor = null
-    this.#provider = null
   }
 
   /** @param {Array<() => void>} listeners */

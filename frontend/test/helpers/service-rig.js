@@ -110,13 +110,15 @@ export function serviceRig(opts = {}) {
  * The whole HOST stack for one container over a FakeSocket: a real transport, a
  * real follower model seeded with `blocks`, and the provider a lens would be
  * handed. Verbs asserted through `provider` still produce real frames on `sock`.
+ * `kind` is the container's (a note by default) and `Adapter` the provider class
+ * its mounting wraps the model in (BlockProviderAdapter by default).
  *
- * @param {{uuid?: string, blocks?: Array<{id: string, kind: string, attrs?: Record<string, any>}>, open?: boolean}} [opts]
+ * @param {{uuid?: string, kind?: string, Adapter?: new (model: any, documentService: any) => any, blocks?: Array<{id: string, kind: string, attrs?: Record<string, any>}>, open?: boolean}} [opts]
  */
 export function providerRig(opts = {}) {
   const uuid = opts.uuid === undefined ? 'doc-1' : opts.uuid
   const rig = serviceRig({ uuid: uuid, open: opts.open })
-  const model = new ContainerModel(uuid, 'note')
+  const model = new ContainerModel(uuid, opts.kind || 'note')
   rig.documentService.observeFrames(uuid, (frame) => model.applyFrame(frame))
   rig.documentService.onContent(uuid, (content) => model.applyLoad(/** @type {any} */ (content)))
   if (opts.blocks) {
@@ -125,6 +127,7 @@ export function providerRig(opts = {}) {
       blocks: opts.blocks.map((b) => ({ id: b.id, kind: b.kind, attrs: b.attrs || {} })),
     })
   }
-  const provider = new BlockProviderAdapter(model, rig.documentService)
+  const Adapter = opts.Adapter || BlockProviderAdapter
+  const provider = new Adapter(model, rig.documentService)
   return Object.assign({}, rig, { model, provider })
 }

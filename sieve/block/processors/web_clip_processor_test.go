@@ -51,7 +51,8 @@ func TestWebClipProcessor_RunJob_stampsPageAttr(t *testing.T) {
 	uuid := doc.UUID()
 	sourceURL := "https://example.com/suzuka"
 
-	p := NewWebClipBlockProcessor(block.BlockServices{AI: aiSvc, Documents: ds, State: state})
+	assets := services.NewAssetService(fs, "")
+	p := NewWebClipBlockProcessor(block.BlockServices{AI: aiSvc, Documents: ds, Assets: assets, State: state})
 	runJob := func(t *testing.T, id, source string) (*domain.SieveBlock, error) {
 		t.Helper()
 		attrs := p.InitAttrs(id, map[string]interface{}{"source": source, "mode": "summarise"})
@@ -80,8 +81,8 @@ func TestWebClipProcessor_RunJob_stampsPageAttr(t *testing.T) {
 	})
 
 	t.Run("stamps page attr when page asset exists", func(t *testing.T) {
-		key := ds.PageAssetKey(sourceURL)
-		if _, err := ds.SaveAsset(doc, key, []byte("<!doctype html><html><head><title>Suzuka Schedule</title></head><body><p>Gates open at 08:00.</p></body></html>")); err != nil {
+		key := assets.PageAssetKey(sourceURL)
+		if _, err := assets.Save(uuid, key, []byte("<!doctype html><html><head><title>Suzuka Schedule</title></head><body><p>Gates open at 08:00.</p></body></html>")); err != nil {
 			t.Fatalf("SaveAsset: %v", err)
 		}
 		blk, err := runJob(t, "wc-1", sourceURL)

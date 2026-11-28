@@ -193,6 +193,10 @@ func (h *SettingsHandler) handleSettingsSave(w http.ResponseWriter, r *http.Requ
 	if v := strings.TrimSpace(r.FormValue("look_and_feel_presentation_measure")); v != "" {
 		settings.LookAndFeel.PresentationMeasure = v + "ch"
 	}
+	settings.LookAndFeel.ChatMeasure = ""
+	if v := strings.TrimSpace(r.FormValue("look_and_feel_chat_measure")); v != "" {
+		settings.LookAndFeel.ChatMeasure = v + "ch"
+	}
 	if maxHistStr := r.FormValue("max_history_versions"); maxHistStr != "" {
 		if val, err := strconv.Atoi(maxHistStr); err == nil {
 			settings.MaxHistoryVersions = val
@@ -204,6 +208,15 @@ func (h *SettingsHandler) handleSettingsSave(w http.ResponseWriter, r *http.Requ
 	if mbStr := r.FormValue("max_attachment_mb"); mbStr != "" {
 		if val, err := strconv.Atoi(mbStr); err == nil && val > 0 {
 			settings.MaxAttachmentBytes = val * 1024 * 1024
+		}
+	}
+	// A blank settle time is the default; one that is not a positive number leaves the setting as
+	// it was.
+	if settle, ok := r.PostForm["chat_settle_seconds"]; ok {
+		if v := strings.TrimSpace(settle[0]); v == "" {
+			settings.Chat.SettleSeconds = 0
+		} else if val, err := strconv.Atoi(v); err == nil && val > 0 {
+			settings.Chat.SettleSeconds = val
 		}
 	}
 	if longStr := r.FormValue("cli_timeout_long"); longStr != "" {

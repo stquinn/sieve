@@ -16,6 +16,7 @@ const NO_CAPABILITY = Object.freeze({
   [LensCapability.MENTIONS]: false,
   [LensCapability.COMMANDS]: false,
   [LensCapability.BLOCKS]: false,
+  [LensCapability.ASK]: false,
 })
 
 export class BlockLens extends AbstractEditor {

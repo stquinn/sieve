@@ -1,9 +1,10 @@
 {{define "delete.html"}}
 {{- $folder := eq .Type "folder" -}}
 {{- $notebook := eq .Type "notebook" -}}
+{{- $chat := eq .Type "chat" -}}
 {{- $guarded := and $folder (not .Contents.IsEmpty) -}}
 <div class="delete-modal" style="padding: 1.5rem; background: var(--theme-bgDark); border-radius: 8px;">
-  <h3 style="font-size: 1.125rem; font-weight: 600; color: var(--theme-accentRed); margin-bottom: 1rem;">Delete {{if $folder}}Folder{{else if $notebook}}Notebook{{else}}Note{{end}}</h3>
+  <h3 style="font-size: 1.125rem; font-weight: 600; color: var(--theme-accentRed); margin-bottom: 1rem;">Delete {{if $folder}}Folder{{else if $notebook}}Notebook{{else if $chat}}Chat{{else}}Note{{end}}</h3>
 
   <p style="font-size: 0.875rem; color: var(--theme-text); margin-bottom: 1.5rem; line-height: 1.4;">
     {{- if $guarded}}
@@ -24,6 +25,8 @@
     {{- else}} The tablet is not connected: if it still has this notebook, it comes back at the next
     sync.
     {{- end}}
+    {{- else if $chat}}
+    This deletes <strong>{{.Name}}</strong>: every question and answer in it, and the files it keeps. This cannot be undone.
     {{- else}}
     Are you sure you want to delete <strong>{{.Name}}</strong>? This cannot be undone.
     {{- end}}
@@ -42,6 +45,8 @@
       hx-delete="/api/folder/{{.ID}}"
     {{else if $notebook}}
       hx-delete="/api/ink/notes/{{.ID}}"
+    {{else if $chat}}
+      hx-delete="/api/chat/{{.ID}}"
     {{else}}
       hx-delete="/api/note/{{.ID}}"
     {{end}}

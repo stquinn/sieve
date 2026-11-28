@@ -10,7 +10,6 @@ import (
 	"sieve/ident"
 	"sieve/sieve/block"
 	"sieve/sieve/domain"
-	"sieve/store"
 )
 
 // fakeNodes stands in for editor.Router. The port is one method, so the whole
@@ -38,9 +37,13 @@ type fakeAssets struct {
 	files map[string][]byte
 }
 
-func (f fakeAssets) Save(store.Category, string, string, []byte) (*domain.ImageAsset, error) {
+func (f fakeAssets) Save(string, string, []byte) (*domain.ImageAsset, error) {
 	return nil, errors.New("fakeAssets: Save is not part of this kind's job")
 }
+
+func (f fakeAssets) OwnedKeys(string) ([]string, error) { return nil, nil }
+
+func (f fakeAssets) PageAssetAddress(string, string) string { return "" }
 
 func (f fakeAssets) ServeAssetData(docUUID, filename string) ([]byte, error) {
 	if b, ok := f.files[docUUID+"/"+filename]; ok {
@@ -61,7 +64,7 @@ func TestReferenceProcessor_InitAttrs_defaults(t *testing.T) {
 		t.Errorf("status: got %v, want COMPLETE for an addressless block", attrs["status"])
 	}
 	for _, field := range []string{
-		"uri", "rel",
+		"uri", "rel", "displayAs",
 		"status", "error", "createdAt", "completedAt", "supportsEmbedding",
 	} {
 		if _, ok := attrs[field]; !ok {
@@ -484,7 +487,7 @@ func TestReferenceProcessor_BuildContext_heldFile(t *testing.T) {
 			"mime": "text/yaml", "bytes": "421888", "summary": "openapi: 3.0.0",
 		},
 	}}
-	ctx := p.BuildContext(blk, block.DocView{UUID: docUUID}, map[string]bool{})
+	ctx := p.BuildContext(blk, block.DocView{ContainerAddressing: block.ContainerAddressing{UUID: docUUID}}, map[string]bool{})
 	if ctx.IsEmpty() {
 		t.Fatal("a held file must contribute context")
 	}
@@ -553,7 +556,7 @@ func TestReferenceProcessor_BuildContext_fileTag(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			blk := domain.SieveBlock{ID: "at-1", Kind: "reference", Attrs: c.attrs}
-			got := NewReferenceProcessor(block.BlockServices{}).BuildContext(blk, block.DocView{UUID: askingUUID}, map[string]bool{}).String()
+			got := NewReferenceProcessor(block.BlockServices{}).BuildContext(blk, block.DocView{ContainerAddressing: block.ContainerAddressing{UUID: askingUUID}}, map[string]bool{}).String()
 			if c.want == "" {
 				if strings.Contains(got, "File:") {
 					t.Errorf("no openable path exists, so no File tag may appear; got:\n%s", got)
@@ -583,7 +586,7 @@ func TestReferenceProcessor_BuildContext_pointer(t *testing.T) {
 			"summary": "Token rotation and session binding",
 		},
 	}}
-	got := p.BuildContext(blk, block.DocView{UUID: ident.New()}, map[string]bool{}).String()
+	got := p.BuildContext(blk, block.DocView{ContainerAddressing: block.ContainerAddressing{UUID: ident.New()}}, map[string]bool{}).String()
 	for _, want := range []string{
 		"Reference: Auth Design",
 		uri,
@@ -596,10 +599,73 @@ func TestReferenceProcessor_BuildContext_pointer(t *testing.T) {
 	}
 }
 
+// A quote's text is what the reader quoted, so the resolve that refreshes the
+// rest of the face leaves it as it was.
+func TestReferenceProcessor_DescribeJob_aResolveLeavesTheQuoteAlone(t *testing.T) {
+	uri := "sieve://" + ident.New() + "/" + ident.New()
+	p := NewReferenceProcessor(block.BlockServices{Nodes: fakeNodes{nodes: map[string]domain.NodeDescriptor{
+		uri: {URI: uri, Kind: "ai-block", Title: "Why does it panic?", Summary: "It panics because the scanner trims"},
+	}}})
+	blk := &domain.SieveBlock{ID: "at-1", Kind: "reference", Attrs: p.InitAttrs("at-1", map[string]interface{}{
+		"uri": uri, "rel": block.RelTarget, "displayAs": ReferenceDisplayQuote,
+		"cache": map[string]interface{}{ReferenceQuoteKey: "the scanner trims"},
+	})}
+	job := p.DescribeJob(block.JobContext{Ctx: context.Background(), UUID: "doc", Block: blk})
+	if job == nil {
+		t.Fatal("a quote whose target is not yet resolved must produce a resolve job")
+	}
+	res, err := job.Work()
+	if err != nil {
+		t.Fatalf("Work: %v", err)
+	}
+	job.Apply(res, blk)
+	face := refFace(t, blk.Attrs)
+	if face[ReferenceQuoteKey] != "the scanner trims" {
+		t.Errorf("cache.quote: got %v, want the text the reader quoted", face[ReferenceQuoteKey])
+	}
+	if face["title"] != "Why does it panic?" || face["mime"] != "sieve/ai-block" {
+		t.Errorf("the rest of the face was not refreshed: %v", face)
+	}
+	if blk.Attrs["displayAs"] != ReferenceDisplayQuote {
+		t.Errorf("displayAs: got %v, want it kept", blk.Attrs["displayAs"])
+	}
+}
+
+// What a quote quoted is its focus: the "Specifically regarding" line the prose
+// kind's highlights produce, so the two union. A reference quoting nothing says
+// no such line.
+func TestReferenceProcessor_BuildContext_quote(t *testing.T) {
+	p := NewReferenceProcessor(block.BlockServices{})
+	uri := "sieve://" + ident.New() + "/" + ident.New()
+	for _, tc := range []struct {
+		name  string
+		cache map[string]interface{}
+		want  string
+	}{
+		{"a quote", map[string]interface{}{ReferenceQuoteKey: "the scanner trims"}, `Specifically regarding: "the scanner trims"`},
+		{"a reference quoting nothing", map[string]interface{}{"title": "Auth Design"}, ""},
+		{"a blank quote", map[string]interface{}{ReferenceQuoteKey: "  "}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			blk := domain.SieveBlock{ID: "at-1", Kind: "reference", Attrs: map[string]interface{}{
+				"uri": uri, "rel": block.RelTarget, "displayAs": ReferenceDisplayQuote, "cache": tc.cache,
+			}}
+			got := p.BuildContext(blk, block.DocView{ContainerAddressing: block.ContainerAddressing{UUID: ident.New()}}, map[string]bool{}).String()
+			has := strings.Contains(got, block.FocusTag)
+			if tc.want == "" && has {
+				t.Errorf("a reference quoting nothing states a focus:\n%s", got)
+			}
+			if tc.want != "" && !strings.Contains(got, tc.want) {
+				t.Errorf("context must state %q; got:\n%s", tc.want, got)
+			}
+		})
+	}
+}
+
 func TestReferenceProcessor_BuildContext_addresslessIsEmpty(t *testing.T) {
 	p := NewReferenceProcessor(block.BlockServices{})
 	blk := domain.SieveBlock{ID: "at-1", Kind: "reference", Attrs: map[string]interface{}{}}
-	if !p.BuildContext(blk, block.DocView{UUID: ident.New()}, map[string]bool{}).IsEmpty() {
+	if !p.BuildContext(blk, block.DocView{ContainerAddressing: block.ContainerAddressing{UUID: ident.New()}}, map[string]bool{}).IsEmpty() {
 		t.Error("an addressless reference contributes nothing")
 	}
 }

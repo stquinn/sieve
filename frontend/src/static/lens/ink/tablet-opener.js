@@ -8,7 +8,7 @@ import { InkOpening, InkRefusal } from '../../contract/ink-container-provider.js
 
 /** @typedef {import('../../contract/ink-container-provider.js').InkContainerProvider} InkContainerProvider */
 /** @typedef {import('../../contract/ink-container-provider.js').InkOpeningResult} InkOpeningResult */
-/** @typedef {import('./action-status.js').ActionStatus} ActionStatus */
+/** @typedef {import('../../renderers/action-status.js').ActionStatus} ActionStatus */
 
 /** What is said of each outcome but opened and refused. */
 const OPENING_WORDS = Object.freeze({

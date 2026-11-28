@@ -1,0 +1,95 @@
+kind: chat
+exchanges:
+    - answer:
+        - attrs:
+            content: Keep the two families as one enum with a `Recoverable` predicate rather than two error types — the scanner already threads one error value.
+            id: 0198c1a0-0002-7000-8000-000000000201
+          kind: prose
+      completedAt: "2026-11-27T13:52:14Z"
+      createdAt: "2026-11-27T13:52:00Z"
+      error: ""
+      id: 0198c1a0-0002-7000-8000-0000000000e1
+      model: ""
+      question:
+        - attrs:
+            content: …and keep recoverable separate from fatal?
+            id: 0198c1a0-0002-7000-8000-000000000101
+          kind: prose
+      status: COMPLETE
+      supportsEmbedding: true
+      type: ASK
+    - answer:
+        - attrs:
+            content: 'It doesn''t — the Tail case fails *structurally*, before any error value exists. Classify at the point the error is minted, behind the `Recoverable` predicate:'
+            id: 0198c1a0-0002-7000-8000-000000000211
+          kind: prose
+        - attrs:
+            id: 0198c1a0-0002-7000-8000-000000000212
+            language: go
+            source: |-
+                func (s *Scanner) classify(err error) Severity {
+                    if pe := asParseError(err); pe != nil && pe.Recoverable {
+                        return SevRecoverable
+                    }
+                    return SevFatal // structural failures never carry pe
+                }
+          kind: code
+        - attrs:
+            cache:
+                title: scanner.go § Tail scanner
+            id: 0198c1a0-0002-7000-8000-000000000213
+            uri: sieve://0198c1a0-0002-7000-8000-0000000000f1/0198c1a0-0002-7000-8000-0000000000f2
+          kind: reference
+      completedAt: "2026-11-27T13:58:31Z"
+      createdAt: "2026-11-27T13:58:00Z"
+      error: ""
+      id: 0198c1a0-0002-7000-8000-0000000000e2
+      model: ""
+      question:
+        - attrs:
+            content: 'But the Tail scanner treats column-zero fences as fatal — doesn''t that contradict this? Here is the scanner as it stands:'
+            id: 0198c1a0-0002-7000-8000-000000000111
+          kind: prose
+        - attrs:
+            id: 0198c1a0-0002-7000-8000-000000000112
+            language: go
+            source: |-
+                func (s *Scanner) tail(line string) bool {
+                    trimmed := strings.TrimSpace(line) // defeats the col-0 guard
+                    return fence.MatchString(trimmed)
+                }
+          kind: code
+        - attrs:
+            cache:
+                title: scanner.go
+            id: 0198c1a0-0002-7000-8000-000000000113
+            rel: attach
+            uri: sieve://0198c1a0-0002-7000-8000-0000000000f1
+          kind: reference
+      status: COMPLETE
+      supportsEmbedding: true
+      type: ASK
+    - createdAt: "2026-11-27T14:01:00Z"
+      error: 'claude exited with status 1: the model is overloaded'
+      id: 0198c1a0-0002-7000-8000-0000000000e3
+      model: ""
+      question:
+        - attrs:
+            content: Which test pins the column-zero guard today?
+            id: 0198c1a0-0002-7000-8000-000000000121
+          kind: prose
+      status: ERROR
+      supportsEmbedding: true
+      type: ASK
+    - createdAt: "2026-11-27T14:02:00Z"
+      error: ""
+      id: 0198c1a0-0002-7000-8000-0000000000e4
+      model: ""
+      question:
+        - attrs:
+            content: Give me the enum plus the two mint sites, and name the test that pins each.
+            id: 0198c1a0-0002-7000-8000-000000000131
+          kind: prose
+      status: PENDING
+      supportsEmbedding: true
+      type: ASK

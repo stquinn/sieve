@@ -107,6 +107,7 @@ func (r *Registry) registerDocumentFrames() {
 	r.addFrame(ChannelDocument, Inbound, TypeInkTranscribePage, InkTranscribePageFrame{})
 	r.addFrame(ChannelDocument, Inbound, TypeInkTranscriptDocument, InkTranscriptDocumentFrame{})
 	r.addFrame(ChannelDocument, Inbound, TypeInkDescribe, InkDescribeFrame{})
+	r.addFrame(ChannelDocument, Inbound, TypeChatAppendExchange, ChatAppendExchangeFrame{})
 
 	r.addFrame(ChannelDocument, Outbound, TypePong, PongFrame{})
 	r.addFrame(ChannelDocument, Outbound, TypeMarkdownContent, MarkdownContentFrame{})
@@ -198,6 +199,15 @@ func (r *Registry) registerEndpoints() {
 	r.addEndpoint(EndpointEntry{
 		Method: "POST", Path: "/api/tabs/close",
 		Request: reflect.TypeOf(TabsCloseRequest{}), ResponseKind: ResponseFragment,
+	})
+	r.addEndpoint(EndpointEntry{
+		Method: "POST", Path: "/api/chat/{id}/rename",
+		Request: reflect.TypeOf(ChatRenameRequest{}), ResponseKind: ResponseNone,
+		AcceptsForm: true,
+	})
+	r.addEndpoint(EndpointEntry{
+		Method: "POST", Path: "/api/chat/{id}/describe",
+		Request: reflect.TypeOf(ChatDescribeRequest{}), ResponseKind: ResponseNone,
 	})
 	r.addEndpoint(EndpointEntry{
 		Method: "GET", Path: "/api/ink/notes/{uuid}/pages/{page}/export",
@@ -317,5 +327,5 @@ func (r *Registry) Features() []string {
 // owns the vocabulary: a client resyncing after a reconnect walks exactly this,
 // and a topic missing from it is a view that silently never refreshes.
 func (r *Registry) Topics() []Topic {
-	return []Topic{TopicNotes, TopicSession, TopicPrompts, TopicLibrary, TopicIntent, TopicInk}
+	return []Topic{TopicNotes, TopicSession, TopicPrompts, TopicLibrary, TopicIntent, TopicInk, TopicChats}
 }

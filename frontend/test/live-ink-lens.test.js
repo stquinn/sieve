@@ -336,7 +336,7 @@ describe('LiveInkLens', () => {
 
   it('is read-only by construction', async () => {
     const { lens } = await presented(liveAttrs())
-    expect(lens.getCapabilities()).toEqual({ markdown: false, mentions: false, commands: false, blocks: false })
+    expect(lens.getCapabilities()).toEqual({ markdown: false, mentions: false, commands: false, blocks: false, ask: false })
     expect(await lens.setMode('markdown')).toBe(false)
     expect(() => new LiveInkLens(LIVE, { provider: { getOrder: () => [], subscribe: () => {} } })).toThrow('InkContainerProvider')
   })

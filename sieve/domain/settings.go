@@ -56,6 +56,7 @@ type Settings struct {
 	Diagram        DiagramSettings `json:"diagram,omitempty"`
 	LookAndFeel    LookAndFeel     `json:"look_and_feel"`
 	Ink            InkSettings     `json:"ink"`
+	Chat           ChatSettings    `json:"chat"`
 }
 
 // InkSettings are this machine's SieveInk settings, under a nested "ink" object.
@@ -82,6 +83,26 @@ func (s InkSettings) Settle() time.Duration {
 		return time.Duration(s.SettleSeconds) * time.Second
 	}
 	return DefaultInkSettle
+}
+
+// ChatSettings are this machine's settings for chats, under a nested "chat" object.
+type ChatSettings struct {
+	// SettleSeconds, when above 0, is how long a chat must go with no question asked and no job
+	// of it running to be named again; otherwise it is DefaultChatSettle.
+	SettleSeconds int `json:"settle_seconds,omitempty"`
+}
+
+// DefaultChatSettle is how long a chat goes with no question asked and no job of it running before
+// it is named again, unless ChatSettings.SettleSeconds says otherwise.
+const DefaultChatSettle = 5 * time.Minute
+
+// Settle is how long a chat must go with no question asked and no job of it running to be named
+// again.
+func (s ChatSettings) Settle() time.Duration {
+	if s.SettleSeconds > 0 {
+		return time.Duration(s.SettleSeconds) * time.Second
+	}
+	return DefaultChatSettle
 }
 
 // DefaultMaxAttachmentBytes is the out-of-the-box attachment ceiling.
@@ -158,6 +179,9 @@ type LookAndFeel struct {
 	// PresentationMeasure is the slide width in Presentation Mode, independent of
 	// EditorMeasure; unset presents at 72ch.
 	PresentationMeasure string `json:"presentation_measure,omitempty"` // "100ch"
+	// ChatMeasure is the width of a chat's thread and of the Ask panel docked
+	// under it, independent of EditorMeasure; unset is 100ch.
+	ChatMeasure string `json:"chat_measure,omitempty"` // "100ch"
 }
 
 // EditorScaleSteps is the closed set of allowed editor-scale multipliers, in
@@ -219,7 +243,7 @@ func (l LookAndFeel) validMeasure(v string) bool {
 // save) means a hand-edited settings.json can never inject arbitrary CSS via
 // the served stylesheet.
 func (l LookAndFeel) Overrides() map[string]string {
-	overrides := make(map[string]string, 7)
+	overrides := make(map[string]string, 8)
 	if l.EditorFont != "" && l.validFont(l.EditorFont) {
 		overrides["editorFont"] = l.EditorFont
 	}
@@ -240,6 +264,9 @@ func (l LookAndFeel) Overrides() map[string]string {
 	}
 	if l.PresentationMeasure != "" && l.validMeasure(l.PresentationMeasure) {
 		overrides["presentationMeasure"] = l.PresentationMeasure
+	}
+	if l.ChatMeasure != "" && l.validMeasure(l.ChatMeasure) {
+		overrides["chatMeasure"] = l.ChatMeasure
 	}
 	return overrides
 }
@@ -408,6 +435,7 @@ func ParseSettings(data []byte) Settings {
 	// loaded struct can be assigned wholesale rather than field-by-field.
 	s.LookAndFeel = loaded.LookAndFeel
 	s.Ink = loaded.Ink
+	s.Chat = loaded.Chat
 	// Overlay persisted containment overrides onto the default profile so the
 	// in-memory settings always carry the full profile (defaults + additions).
 	s.AI.Containment = LoadContainmentProfile(loaded.AI.Containment)

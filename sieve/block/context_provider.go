@@ -11,7 +11,7 @@ import (
 // seen is threaded through recursion to prevent cycles — pass it on
 // whenever calling BuildContextForID from within BuildContext.
 type ContextProvider interface {
-	BuildContext(block domain.SieveBlock, doc DocView, seen map[string]bool) AIContext
+	BuildContext(block domain.SieveBlock, doc ContainerView, seen map[string]bool) AIContext
 }
 
 var (
@@ -53,36 +53,27 @@ func GetContextProvider(kind string) ContextProvider {
 // a closure dropping the ai-block kind so prior answers never leak into TARGET.
 // Nil = accept all (existing behaviour). Targeting a SPECIFIC block by id is
 // unaffected: a block resolved by id is returned as itself, filter untouched.
-func BuildContextForID(id string, doc DocView, seen map[string]bool, filter BlockFilter) AIContext {
+func BuildContextForID(id string, doc ContainerView, seen map[string]bool, filter BlockFilter) AIContext {
 	if id == "" || seen[id] {
 		return AIContext{}
 	}
 	seen[id] = true
 	if id == WholeDocumentRef {
-		return doc.DocumentContext(doc.deriveMarkdownFiltered(filter)).OfKind(WholeDocumentKind)
+		return doc.WholeContext(filter).OfKind(WholeDocumentKind)
 	}
-	// Uniform dispatch: every block — prose included — resolves by id (GetBlock) and
+	// Uniform dispatch: every block — prose included — resolves by id (Block) and
 	// routes to its kind's registered ContextProvider. Prose is NOT special-cased
 	// here; ProseProcessor.BuildContext returns its content, exactly as the code
 	// provider returns its source. Kind matters only inside the provider.
-	if b, ok := doc.GetBlock(id); ok {
-		cp := GetContextProvider(b.Kind)
-		if cp == nil {
-			logger.Warn("ContextProvider: no provider registered for block kind %q", b.Kind)
-			return AIContext{}
-		}
-		return cp.BuildContext(domain.SieveBlock{ID: b.ID, Kind: b.Kind, Attrs: b.Attrs}, doc, seen).OfKind(b.Kind)
-	}
-	// Fallback: structured blocks parseable straight from markdown (markdown mode).
-	found, ok := NewDocumentCodec(GlobalRegistry()).findBlockByID(doc.deriveMarkdown(), id)
+	b, ok := doc.Block(id)
 	if !ok {
 		logger.Warn("ContextProvider: block ID %q not found in doc or blocks map", id)
 		return AIContext{}
 	}
-	cp := GetContextProvider(found.Kind)
+	cp := GetContextProvider(b.Kind)
 	if cp == nil {
-		logger.Warn("ContextProvider: no provider registered for block kind %q", found.Kind)
+		logger.Warn("ContextProvider: no provider registered for block kind %q", b.Kind)
 		return AIContext{}
 	}
-	return cp.BuildContext(found, doc, seen).OfKind(found.Kind)
+	return cp.BuildContext(domain.SieveBlock{ID: b.ID, Kind: b.Kind, Attrs: b.Attrs}, doc, seen).OfKind(b.Kind)
 }

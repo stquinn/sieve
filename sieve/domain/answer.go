@@ -11,7 +11,7 @@ import (
 // block and no other.
 //
 // The block lives in one of two holders, which Holder names: a block of the
-// document Container, or the block of a running command, whose id is that
+// open container Container, or the block of a running command, whose id is that
 // command's correlation id. Container names the document a command was run
 // over, when there is one, and holds nothing of its answer. An Exchange with no
 // Block grants the container alone and answers nothing.
@@ -25,9 +25,9 @@ type Exchange struct {
 type AnswerHolder string
 
 const (
-	// HeldInDocument is the zero holder: the block is a block of the exchange's
-	// Container.
-	HeldInDocument AnswerHolder = ""
+	// HeldInContainer is the zero holder: the block is a block of the exchange's
+	// Container, held open and written by the editor.
+	HeldInContainer AnswerHolder = ""
 	// HeldByCommand is the block of the running command whose correlation id is
 	// the exchange's Block.
 	HeldByCommand AnswerHolder = "command"
@@ -38,10 +38,10 @@ func (e Exchange) Answers() bool {
 	return e.Block != "" && (e.Holder == HeldByCommand || e.Container != "")
 }
 
-// AnswerDocument is the document the exchange's answer is held in: its
+// AnswerContainer is the container the exchange's answer is held in: its
 // Container when that holds the block, "" when a command holds it.
-func (e Exchange) AnswerDocument() string {
-	if e.Holder != HeldInDocument {
+func (e Exchange) AnswerContainer() string {
+	if e.Holder != HeldInContainer {
 		return ""
 	}
 	return e.Container

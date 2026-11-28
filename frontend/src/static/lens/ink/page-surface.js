@@ -44,7 +44,7 @@ import { NotePager } from './note-pager.js'
  * @typedef {object} PageSurfaceHost
  * @property {(event: KeyboardEvent) => boolean} claimKey
  * @property {(event: import('../abstract-surface.js').SurfaceEventMsg) => void} onSurfaceEvent
- * @property {import('./action-status.js').ActionStatus} actionStatus
+ * @property {import('../../renderers/action-status.js').ActionStatus} actionStatus
  */
 
 /** The zoom factor of one press of a zoom key or button. */

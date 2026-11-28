@@ -21,6 +21,7 @@ import (
 	"sieve/sieve/domain"
 	"sieve/sieve/editor"
 	"sieve/sieve/services"
+	"sieve/store"
 	"sieve/store/filestore"
 )
 
@@ -50,8 +51,8 @@ func newTestServerWithDocs(t *testing.T) (*Server, *services.DocumentService) {
 }
 
 // newTestServerWithStore builds an EMPTY library and wires the server exactly as
-// the composition root does — the real editor.Router over the real notes source
-// — so the address verb is exercised through the resolver it actually ships
+// the composition root does — the real editor.Router over the real notes and
+// chats sources — so the address verb is exercised through the resolver it actually ships
 // with, refusals and all, rather than a fake that could agree with itself. The
 // store comes back for the tests that seed what only it can create: an asset.
 func newTestServerWithStore(t *testing.T) (*Server, *services.DocumentService, *filestore.FileStore) {
@@ -70,8 +71,12 @@ func newTestServerWithStore(t *testing.T) (*Server, *services.DocumentService, *
 	block.ResetRegistry()
 	block.RegisterProcessor(&processors.ProseProcessor{})
 	t.Cleanup(block.ResetRegistry)
-	router := editor.NewRouter(editor.NewNotesSource(ds))
-	return NewServer(ds, router, router, services.NewLinkPreviewService()), ds, fs
+	chats, err := services.NewChatService(fs, block.NewChatCodec(block.GlobalRegistry()))
+	if err != nil {
+		t.Fatalf("NewChatService: %v", err)
+	}
+	router := editor.NewRouter(editor.NewNotesSource(ds), editor.NewChatSource(chats))
+	return NewServer(ds, services.NewAssetService(fs, ""), router, router, services.NewLinkPreviewService()), ds, fs
 }
 
 // seedNote creates a buffer, stamps metadata, and files it into folder.
@@ -304,6 +309,8 @@ func TestListFacets_FoldersAndTags(t *testing.T) {
 	}
 }
 
+// fetch_page keeps a fetched page in the folder of the container the run works
+// on, a note or a chat alike, and a second fetch of the same URL reuses it.
 func TestFetchPage_WritesHTMLAssetAndReusesOnSecondCall(t *testing.T) {
 	var hits atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -323,84 +330,117 @@ func TestFetchPage_WritesHTMLAssetAndReusesOnSecondCall(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	s, ds := newTestServerWithDocs(t)
-	buf, err := ds.New()
-	if err != nil {
-		t.Fatalf("New buffer: %v", err)
-	}
-	buf.SetBody([]byte("Initial notes.\n"))
-	doc, err := ds.Save(buf)
-	if err != nil {
-		t.Fatalf("Save buffer: %v", err)
-	}
-	uuid := doc.UUID()
+	for _, owner := range []struct {
+		name string
+		// create stores the container the run works on and answers its uuid, and
+		// what the store now holds for it.
+		create func(t *testing.T, ds *services.DocumentService, st *filestore.FileStore) (string, func() store.MetaStorable)
+	}{
+		{"a note", func(t *testing.T, ds *services.DocumentService, _ *filestore.FileStore) (string, func() store.MetaStorable) {
+			buf, err := ds.New()
+			if err != nil {
+				t.Fatalf("New buffer: %v", err)
+			}
+			buf.SetBody([]byte("Initial notes.\n"))
+			doc, err := ds.Save(buf)
+			if err != nil {
+				t.Fatalf("Save buffer: %v", err)
+			}
+			return doc.UUID(), func() store.MetaStorable {
+				reloaded, err := ds.LoadByUUID(doc.UUID())
+				if err != nil {
+					t.Fatalf("LoadByUUID: %v", err)
+				}
+				return reloaded.Storable()
+			}
+		}},
+		{"a chat", func(t *testing.T, _ *services.DocumentService, st *filestore.FileStore) (string, func() store.MetaStorable) {
+			chats, err := services.NewChatService(st, block.NewChatCodec(block.GlobalRegistry()))
+			if err != nil {
+				t.Fatalf("NewChatService: %v", err)
+			}
+			c, err := chats.Create("")
+			if err != nil {
+				t.Fatalf("Create chat: %v", err)
+			}
+			return c.UUID(), func() store.MetaStorable {
+				reloaded, err := chats.Load(c.UUID())
+				if err != nil {
+					t.Fatalf("Load chat: %v", err)
+				}
+				return reloaded.Storable()
+			}
+		}},
+	} {
+		t.Run(owner.name, func(t *testing.T) {
+			hits.Store(0)
+			s, ds, st := newTestServerWithStore(t)
+			uuid, stored := owner.create(t, ds, st)
 
-	ctx := WithDocument(context.Background(), uuid)
-	pageURL := srv.URL + "/sport/formula1/articles/cmvg9z1v33keo"
-	_, node, err := s.fetchPage(ctx, nil, FetchPageInput{URL: pageURL})
-	if err != nil {
-		t.Fatalf("fetch_page first call: %v", err)
-	}
-	if hits.Load() != 1 {
-		t.Fatalf("HTTP hits after first call = %d, want 1", hits.Load())
-	}
-	if node.Kind != "asset" {
-		t.Errorf("Kind = %q, want asset", node.Kind)
-	}
-	key := ds.PageAssetKey(pageURL)
-	if !strings.HasSuffix(key, ".html") {
-		t.Errorf("page asset key = %q, want an .html key", key)
-	}
-	wantURI := domain.NewLeafAddress(uuid, key).String()
-	if node.URI != wantURI {
-		t.Errorf("URI = %q, want %q", node.URI, wantURI)
-	}
-	if node.Title != "Verstappen Wins in Suzuka" {
-		t.Errorf("Title = %q, want %q", node.Title, "Verstappen Wins in Suzuka")
-	}
-	wantPath := path.Join(doc.Storable().ExternalRef(), key)
-	if node.Path != wantPath {
-		t.Errorf("Path = %q, want %q", node.Path, wantPath)
-	}
-	if node.Bytes == 0 {
-		t.Error("Bytes = 0, want non-zero HTML asset size")
-	}
-	if node.Body != "" {
-		t.Errorf("Body = %q, want empty (asset bytes live on disk at Path)", node.Body)
-	}
+			ctx := WithDocument(context.Background(), uuid)
+			pageURL := srv.URL + "/sport/formula1/articles/cmvg9z1v33keo"
+			_, node, err := s.fetchPage(ctx, nil, FetchPageInput{URL: pageURL})
+			if err != nil {
+				t.Fatalf("fetch_page first call: %v", err)
+			}
+			if hits.Load() != 1 {
+				t.Fatalf("HTTP hits after first call = %d, want 1", hits.Load())
+			}
+			if node.Kind != "asset" {
+				t.Errorf("Kind = %q, want asset", node.Kind)
+			}
+			key := s.assets.PageAssetKey(pageURL)
+			if !strings.HasSuffix(key, ".html") {
+				t.Errorf("page asset key = %q, want an .html key", key)
+			}
+			wantURI := domain.NewLeafAddress(uuid, key).String()
+			if node.URI != wantURI {
+				t.Errorf("URI = %q, want %q", node.URI, wantURI)
+			}
+			if node.Title != "Verstappen Wins in Suzuka" {
+				t.Errorf("Title = %q, want %q", node.Title, "Verstappen Wins in Suzuka")
+			}
+			wantPath := path.Join(stored().ExternalRef(), key)
+			if node.Path != wantPath {
+				t.Errorf("Path = %q, want %q", node.Path, wantPath)
+			}
+			if node.Bytes == 0 {
+				t.Error("Bytes = 0, want non-zero HTML asset size")
+			}
+			if node.Body != "" {
+				t.Errorf("Body = %q, want empty (asset bytes live on disk at Path)", node.Body)
+			}
 
-	reloaded, err := ds.LoadByUUID(uuid)
-	if err != nil {
-		t.Fatalf("LoadByUUID: %v", err)
-	}
-	var savedBody string
-	for _, owned := range reloaded.Storable().Owns() {
-		if owned.Key() == key {
-			savedBody = string(owned.Body())
-			break
-		}
-	}
-	if savedBody == "" {
-		t.Fatalf("asset %q not found in document %s owns", key, uuid)
-	}
-	if !strings.HasPrefix(savedBody, `<!doctype html><html><head><meta charset="utf-8"><title>Verstappen Wins in Suzuka</title></head><body>`) ||
-		!strings.Contains(savedBody, "Max Verstappen controlled the Japanese Grand Prix") {
-		t.Errorf("saved asset is not the titled readable HTML document:\n%s", savedBody)
-	}
-	if strings.Contains(savedBody, "Skip to content") || strings.Contains(savedBody, "BBC Terms of Use") {
-		t.Errorf("saved asset retained boilerplate:\n%s", savedBody)
-	}
+			var savedBody string
+			for _, owned := range stored().Owns() {
+				if owned.Key() == key {
+					savedBody = string(owned.Body())
+					break
+				}
+			}
+			if savedBody == "" {
+				t.Fatalf("asset %q not found in what %s owns", key, uuid)
+			}
+			if !strings.HasPrefix(savedBody, `<!doctype html><html><head><meta charset="utf-8"><title>Verstappen Wins in Suzuka</title></head><body>`) ||
+				!strings.Contains(savedBody, "Max Verstappen controlled the Japanese Grand Prix") {
+				t.Errorf("saved asset is not the titled readable HTML document:\n%s", savedBody)
+			}
+			if strings.Contains(savedBody, "Skip to content") || strings.Contains(savedBody, "BBC Terms of Use") {
+				t.Errorf("saved asset retained boilerplate:\n%s", savedBody)
+			}
 
-	// Second call for the same URL must reuse the existing asset without re-fetching.
-	_, node2, err := s.fetchPage(ctx, nil, FetchPageInput{URL: pageURL})
-	if err != nil {
-		t.Fatalf("fetch_page second call: %v", err)
-	}
-	if hits.Load() != 1 {
-		t.Errorf("HTTP hits after second call = %d, want 1 (existing asset should be reused)", hits.Load())
-	}
-	if node2.URI != node.URI || node2.Bytes != node.Bytes || node2.Title != node.Title {
-		t.Errorf("second call descriptor = %+v, want %+v", node2, node)
+			// Second call for the same URL must reuse the existing asset without re-fetching.
+			_, node2, err := s.fetchPage(ctx, nil, FetchPageInput{URL: pageURL})
+			if err != nil {
+				t.Fatalf("fetch_page second call: %v", err)
+			}
+			if hits.Load() != 1 {
+				t.Errorf("HTTP hits after second call = %d, want 1 (existing asset should be reused)", hits.Load())
+			}
+			if node2.URI != node.URI || node2.Bytes != node.Bytes || node2.Title != node.Title {
+				t.Errorf("second call descriptor = %+v, want %+v", node2, node)
+			}
+		})
 	}
 }
 
@@ -523,8 +563,8 @@ func (w *stubAnswerWriter) AppendToAnswer(ex domain.Exchange, el domain.SieveBlo
 // holdings are the real holdings of each holder an answer can live in, as their
 // writers declare them.
 var holdings = map[domain.AnswerHolder]domain.AnswerHolding{
-	domain.HeldInDocument: (&editor.EditorService{}).AnswerHolding(),
-	domain.HeldByCommand:  command.NewRegistry().AnswerHolding(),
+	domain.HeldInContainer: (&editor.EditorService{}).AnswerHolding(),
+	domain.HeldByCommand:   command.NewRegistry().AnswerHolding(),
 }
 
 // newAnswerServer is a server with answers opened over the real registry (prose
@@ -615,8 +655,36 @@ func TestAddToAnswer_AppendsToTheTokensExchange(t *testing.T) {
 	}
 }
 
+// newOwningDocument stores a new document in st and answers its uuid.
+func newOwningDocument(t *testing.T, st *filestore.FileStore) string {
+	t.Helper()
+	docs, err := services.NewDocumentService(st)
+	if err != nil {
+		t.Fatalf("NewDocumentService: %v", err)
+	}
+	doc, err := docs.New()
+	if err != nil {
+		t.Fatalf("New document: %v", err)
+	}
+	return doc.UUID()
+}
+
+// newOwningChat stores a new chat in st and answers its uuid.
+func newOwningChat(t *testing.T, st *filestore.FileStore) string {
+	t.Helper()
+	chats, err := services.NewChatService(st, block.NewChatCodec(block.GlobalRegistry()))
+	if err != nil {
+		t.Fatalf("NewChatService: %v", err)
+	}
+	c, err := chats.Create("")
+	if err != nil {
+		t.Fatalf("Create chat: %v", err)
+	}
+	return c.UUID()
+}
+
 // The holder an answer lives in decides what a run may write into it: an answer
-// held in a document takes every kind, one held by a popup command refuses a
+// held in an open container, a note or a chat, takes every kind, one held by a popup command refuses a
 // block that lands waiting on work — every log, link card, web clip and image,
 // a PlantUML diagram — with the reason and the types it takes, and describe_answer lists
 // exactly what this run is offered. A type no kind offers is refused apart.
@@ -636,24 +704,34 @@ func TestAnswerHolders_DecideWhatARunMayWrite(t *testing.T) {
 		{"image", AddToAnswerInput{ContentType: "sieve/smart-image", Attrs: map[string]any{"url": "{web}/chart.png"}}, true},
 	}
 	for _, holder := range []struct {
-		name    string
-		ex      domain.Exchange
+		name string
+		ex   domain.Exchange
+		// owner stores the container the answer lands in and answers its uuid; nil
+		// for a holder that is no container.
+		owner   func(t *testing.T, st *filestore.FileStore) string
 		refused map[string]string // kind → what its refusal says
 	}{
-		{name: "an answer in a document", ex: domain.Exchange{Container: "0198c1a0-0001-7000-8000-000000000001", Block: "0198c1a0-0001-7000-8000-000000000020"}},
+		{name: "an answer in a document", ex: domain.Exchange{Block: "0198c1a0-0001-7000-8000-000000000020"}, owner: newOwningDocument},
+		{name: "an answer in a chat", ex: domain.Exchange{Block: "0198c1a0-0001-7000-8000-000000000022"}, owner: newOwningChat},
 		{name: "a popup command's answer", ex: domain.Exchange{Block: "0198c1a0-0001-7000-8000-000000000021", Holder: domain.HeldByCommand},
 			refused: map[string]string{"plantuml": "a PlantUML diagram", "log": "every log", "link card": "every link card", "web clip": "every web clip", "image": "every image"}},
 	} {
 		t.Run(holder.name, func(t *testing.T) {
-			s, w, token := newAnswerServer(t, holder.ex, true)
-			block.RegisterProcessor(processors.NewDiagramProcessor(block.BlockServices{}))
-			block.RegisterProcessor(processors.NewLogProcessor(block.BlockServices{}))
-			block.RegisterProcessor(processors.NewSmartCardProcessor(block.BlockServices{}))
-			block.RegisterProcessor(processors.NewWebClipBlockProcessor(block.BlockServices{}))
 			images, err := filestore.NewFileStore(t.TempDir(), "testhost")
 			if err != nil {
 				t.Fatalf("NewFileStore: %v", err)
 			}
+			// A file is kept for an owner the store holds, so the container an answer
+			// lands in is a real one in the store the image is kept in.
+			ex := holder.ex
+			if holder.owner != nil {
+				ex.Container = holder.owner(t, images)
+			}
+			s, w, token := newAnswerServer(t, ex, true)
+			block.RegisterProcessor(processors.NewDiagramProcessor(block.BlockServices{}))
+			block.RegisterProcessor(processors.NewLogProcessor(block.BlockServices{}))
+			block.RegisterProcessor(processors.NewSmartCardProcessor(block.BlockServices{}))
+			block.RegisterProcessor(processors.NewWebClipBlockProcessor(block.BlockServices{}))
 			block.RegisterProcessor(processors.NewSmartImageProcessor(block.BlockServices{Assets: services.NewAssetService(images, "")}))
 			var chart bytes.Buffer
 			_ = png.Encode(&chart, image.NewRGBA(image.Rect(0, 0, 4, 3)))

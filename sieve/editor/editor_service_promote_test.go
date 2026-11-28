@@ -31,7 +31,7 @@ func (p *testMarkdownProcessor) DescribeJob(_ block.JobContext) *block.Processor
 }
 func (p *testMarkdownProcessor) OnChange(_ *domain.SieveBlock) {}
 func (p *testMarkdownProcessor) Mode() block.BlockMode         { return block.BlockModeBlock }
-func (p *testMarkdownProcessor) BuildContext(_ domain.SieveBlock, _ block.DocView, _ map[string]bool) block.AIContext {
+func (p *testMarkdownProcessor) BuildContext(_ domain.SieveBlock, _ block.ContainerView, _ map[string]bool) block.AIContext {
 	return block.AIContext{}
 }
 func (p *testMarkdownProcessor) MarkdownRepresentation(_ domain.SieveBlock, _ string) string {

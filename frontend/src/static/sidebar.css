@@ -216,6 +216,26 @@
 .ink-tree__item:hover .ink-tree__meta,
 .ink-tree__item[data-active] .ink-tree__meta { color: var(--theme-textDim); }
 
+/* A chat's row says when the chat last changed, quietly, at its right. */
+.chats-tree__when {
+  flex-shrink: 0;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--theme-muted);
+}
+
+/* A quiet heading over the chats that last changed on one day: Today, Yesterday, Earlier. */
+.chats-tree__group {
+  padding-top: 6px;
+  padding-bottom: 2px;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--theme-muted);
+  user-select: none;
+  -webkit-user-select: none;
+}
+
 /* ── Diary: the tree's item after Notebooks, drawn as the Ink item is ── */
 
 .diary-tree__toggle,

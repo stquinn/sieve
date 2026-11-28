@@ -65,6 +65,7 @@ import (
 var contentExtensions = map[string]string{
 	store.TypeDocument: ".md",
 	store.TypeBlock:    ".block",
+	store.TypeChat:     ".chat",
 }
 
 // FileStore is a filesystem-backed implementation of store.Store.

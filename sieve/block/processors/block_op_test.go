@@ -91,7 +91,7 @@ func TestShadowDocument_ContentForSave_SerializesDoc(t *testing.T) {
 // block. The frontend mints client-side and supplies it; this is the backend
 // floor that guarantees the invariant regardless of caller.
 func TestBlockDoc_ApplyOp_CreateBlockGeneratesIdWhenMissing(t *testing.T) {
-	s := &block.ShadowDocument{Blocks: []domain.SieveBlock{}}
+	s := &block.ShadowDocument{LiveBlocks: block.LiveBlocks{Blocks: []domain.SieveBlock{}}}
 	if err := s.ApplyOp(block.BlockOp{Type: "create-block", Kind: block.KindProse, Attrs: map[string]interface{}{"content": "fresh"}, Index: 0}); err != nil {
 		t.Fatalf("applyOpTo create-block with no id should generate one, got error: %v", err)
 	}
@@ -108,7 +108,7 @@ func TestBlockDoc_ApplyOp_CreateBlockGeneratesIdWhenMissing(t *testing.T) {
 }
 
 func TestBlockDoc_ApplyOp_CreateBlockKeepsGivenId(t *testing.T) {
-	s := &block.ShadowDocument{Blocks: []domain.SieveBlock{}}
+	s := &block.ShadowDocument{LiveBlocks: block.LiveBlocks{Blocks: []domain.SieveBlock{}}}
 	if err := s.ApplyOp(block.BlockOp{Type: "create-block", BlockID: "pr-given", Kind: block.KindProse, Attrs: map[string]interface{}{"content": "x"}, Index: 0}); err != nil {
 		t.Fatalf("applyOpTo: %v", err)
 	}
@@ -119,9 +119,9 @@ func TestBlockDoc_ApplyOp_CreateBlockKeepsGivenId(t *testing.T) {
 }
 
 func TestBlockDoc_ApplyOp_UpdateProseContent(t *testing.T) {
-	s := &block.ShadowDocument{Blocks: []domain.SieveBlock{
+	s := &block.ShadowDocument{LiveBlocks: block.LiveBlocks{Blocks: []domain.SieveBlock{
 		{ID: "pr-1", Kind: block.KindProse, Attrs: map[string]interface{}{"content": "old"}},
-	}}
+	}}}
 	if err := s.ApplyOp(block.BlockOp{Type: "update-block", BlockID: "pr-1", Attrs: map[string]interface{}{"content": "new"}}); err != nil {
 		t.Fatalf("applyOpTo: %v", err)
 	}
@@ -132,9 +132,9 @@ func TestBlockDoc_ApplyOp_UpdateProseContent(t *testing.T) {
 }
 
 func TestBlockDoc_ApplyOp_UpdateAttrsAndAliases(t *testing.T) {
-	s := &block.ShadowDocument{Blocks: []domain.SieveBlock{
+	s := &block.ShadowDocument{LiveBlocks: block.LiveBlocks{Blocks: []domain.SieveBlock{
 		{ID: "ai-1", Kind: "ai-block", Attrs: map[string]interface{}{"status": "PENDING"}},
-	}}
+	}}}
 	op := block.BlockOp{
 		Type:    "update-block",
 		BlockID: "ai-1",
@@ -155,18 +155,18 @@ func TestBlockDoc_ApplyOp_UpdateAttrsAndAliases(t *testing.T) {
 }
 
 func TestBlockDoc_ApplyOp_UnknownBlockErrors(t *testing.T) {
-	s := &block.ShadowDocument{Blocks: []domain.SieveBlock{{ID: "pr-1", Kind: block.KindProse, Attrs: map[string]interface{}{"content": "x"}}}}
+	s := &block.ShadowDocument{LiveBlocks: block.LiveBlocks{Blocks: []domain.SieveBlock{{ID: "pr-1", Kind: block.KindProse, Attrs: map[string]interface{}{"content": "x"}}}}}
 	if err := s.ApplyOp(block.BlockOp{Type: "update-block", BlockID: "nope", Attrs: map[string]interface{}{"content": "y"}}); err == nil {
 		t.Fatal("expected error updating a missing block, got nil")
 	}
 }
 
 func TestBlockDoc_ApplyOp_DeleteTopLevel(t *testing.T) {
-	s := &block.ShadowDocument{Blocks: []domain.SieveBlock{
+	s := &block.ShadowDocument{LiveBlocks: block.LiveBlocks{Blocks: []domain.SieveBlock{
 		{ID: "pr-1", Kind: block.KindProse, Attrs: map[string]interface{}{"content": "a"}},
 		{ID: "pr-2", Kind: block.KindProse, Attrs: map[string]interface{}{"content": "b"}},
 		{ID: "pr-3", Kind: block.KindProse, Attrs: map[string]interface{}{"content": "c"}},
-	}}
+	}}}
 	if err := s.ApplyOp(block.BlockOp{Type: "delete-block", BlockID: "pr-2"}); err != nil {
 		t.Fatalf("applyOpTo: %v", err)
 	}
@@ -177,11 +177,11 @@ func TestBlockDoc_ApplyOp_DeleteTopLevel(t *testing.T) {
 }
 
 func TestBlockDoc_ApplyOp_MoveReordersWithinParent(t *testing.T) {
-	s := &block.ShadowDocument{Blocks: []domain.SieveBlock{
+	s := &block.ShadowDocument{LiveBlocks: block.LiveBlocks{Blocks: []domain.SieveBlock{
 		{ID: "pr-1", Kind: block.KindProse, Attrs: map[string]interface{}{"content": "a"}},
 		{ID: "pr-2", Kind: block.KindProse, Attrs: map[string]interface{}{"content": "b"}},
 		{ID: "pr-3", Kind: block.KindProse, Attrs: map[string]interface{}{"content": "c"}},
-	}}
+	}}}
 	// Move pr-3 to the front (index 0).
 	if err := s.ApplyOp(block.BlockOp{Type: "move", BlockID: "pr-3", Index: 0}); err != nil {
 		t.Fatalf("applyOpTo: %v", err)
@@ -195,10 +195,10 @@ func TestBlockDoc_ApplyOp_MoveReordersWithinParent(t *testing.T) {
 }
 
 func TestBlockDoc_ApplyOp_CreateTopLevelAtIndex(t *testing.T) {
-	s := &block.ShadowDocument{Blocks: []domain.SieveBlock{
+	s := &block.ShadowDocument{LiveBlocks: block.LiveBlocks{Blocks: []domain.SieveBlock{
 		{ID: "pr-1", Kind: block.KindProse, Attrs: map[string]interface{}{"content": "a"}},
 		{ID: "pr-2", Kind: block.KindProse, Attrs: map[string]interface{}{"content": "b"}},
-	}}
+	}}}
 	op := block.BlockOp{Type: "create-block", BlockID: "pr-mid", Kind: block.KindProse, Attrs: map[string]interface{}{"content": "mid"}, Index: 1}
 	if err := s.ApplyOp(op); err != nil {
 		t.Fatalf("applyOpTo: %v", err)
@@ -214,9 +214,9 @@ func TestBlockDoc_ApplyOp_CreateTopLevelAtIndex(t *testing.T) {
 
 // Nesting into a parent is rejected until Stage E re-introduces containers.
 func TestBlockDoc_ApplyOp_CreateIntoParentRejected(t *testing.T) {
-	s := &block.ShadowDocument{Blocks: []domain.SieveBlock{
+	s := &block.ShadowDocument{LiveBlocks: block.LiveBlocks{Blocks: []domain.SieveBlock{
 		{ID: "pr-1", Kind: block.KindProse, Attrs: map[string]interface{}{"content": "a"}},
-	}}
+	}}}
 	op := block.BlockOp{
 		Type: "create-block", BlockID: "co-1", Kind: "code",
 		Attrs: map[string]interface{}{"source": "x = 1"}, Index: 0, ParentID: "pr-1",
@@ -286,11 +286,11 @@ func equalStrs(a, b []string) bool {
 // what makes it safe to send last in a batch that also created or deleted blocks.
 func TestBlockDoc_ApplyOp_SetOrder(t *testing.T) {
 	newDoc := func() *block.ShadowDocument {
-		return &block.ShadowDocument{Blocks: []domain.SieveBlock{
+		return &block.ShadowDocument{LiveBlocks: block.LiveBlocks{Blocks: []domain.SieveBlock{
 			{ID: "pr-1", Kind: block.KindProse, Attrs: map[string]interface{}{"content": "a"}},
 			{ID: "pr-2", Kind: block.KindProse, Attrs: map[string]interface{}{"content": "b"}},
 			{ID: "pr-3", Kind: block.KindProse, Attrs: map[string]interface{}{"content": "c"}},
-		}}
+		}}}
 	}
 	ids := func(s *block.ShadowDocument) string {
 		var out []string
@@ -327,10 +327,10 @@ func TestBlockDoc_ApplyOp_SetOrder(t *testing.T) {
 // partial list is the difference between a reorder and a mass delete.
 func TestBlockDoc_ApplyOp_SetOrderRejectsIncompleteOrUnknown(t *testing.T) {
 	newDoc := func() *block.ShadowDocument {
-		return &block.ShadowDocument{Blocks: []domain.SieveBlock{
+		return &block.ShadowDocument{LiveBlocks: block.LiveBlocks{Blocks: []domain.SieveBlock{
 			{ID: "pr-1", Kind: block.KindProse},
 			{ID: "pr-2", Kind: block.KindProse},
-		}}
+		}}}
 	}
 	for name, order := range map[string][]string{
 		"missing a block":  {"pr-2"},

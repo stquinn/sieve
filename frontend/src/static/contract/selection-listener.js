@@ -36,7 +36,7 @@
  * @property {'none'|'caret'|'range'|'block'} selectionType
  * @property {number|null} caret
  * @property {{from: number, to: number}|null} range
- * @property {string|null} selectedText
+ * @property {string|null} selectedText  the text the selection holds: a range's raw text, or what a lens quotes from the block it selects; else null
  * @property {string|null} blockId       primary block the cursor/selection sits in/on
  * @property {string[]} blockIds         all blocks the range spans (superset of [blockId]); [] when 'none'
  * @property {string|null} blockKind

@@ -8,7 +8,7 @@
      data-tab-viewed="{{$t.LastViewed}}"{{if eq $i $.ActiveIdx}}
      data-tab-active="true"{{end}}
      data-ctx-id="{{$t.ID}}"
-     data-ctx-type="{{if $t.IsDocument}}note{{else if eq $t.ContainerKind "prompt"}}prompt{{else if eq $t.ContainerKind "digital-note"}}notebook{{else if eq $t.ContainerKind "ink-live"}}inkLive{{else}}tab{{end}}"
+     data-ctx-type="{{if $t.IsDocument}}note{{else if eq $t.ContainerKind "prompt"}}prompt{{else if eq $t.ContainerKind "digital-note"}}notebook{{else if eq $t.ContainerKind "ink-live"}}inkLive{{else if eq $t.ContainerKind "chat"}}chat{{else}}tab{{end}}"
      data-ctx-name="{{if $t.DisplayName}}{{$t.DisplayName}}{{else}}Untitled{{end}}"
      data-ctx-intent="{{$t.UserIntent}}"
      data-ctx-is-dir="false"
@@ -18,7 +18,7 @@
     class="group flex items-center gap-1.5 pl-3 pr-1.5 h-full cursor-pointer w-full text-[14px] select-none transition-colors border-solid border-0 border-r-[1px] border-r-white/10 -mb-[2px] border-t-2 border-b-2 overflow-hidden{{if eq $i $.ActiveIdx}} bg-tn-bg text-tn-text border-t-tn-blue border-b-tn-bg{{else}} bg-tn-bg-dark text-tn-text-dim hover:bg-tn-bg hover:text-tn-text border-t-transparent border-b-transparent{{end}}"
     onmousedown="if(event.button===0 && !event.target.closest('button')){window.sieveWorkspace.open('{{$t.ID}}')}"
   >
-    <div class="flex items-center justify-center relative w-4 h-4 shrink-0">
+    <div class="flex items-center justify-center relative {{if eq $t.ContainerKind "chat"}}min-w-[1rem]{{else}}w-4{{end}} h-4 shrink-0">
       <div class="tab-icon-normal flex items-center justify-center">
         {{if eq $t.UserIntent "trash"}}
         <span class="w-1.5 h-1.5 rounded-full shrink-0 bg-tn-red{{if ne $i $.ActiveIdx}} opacity-40{{end}}"></span>
@@ -26,6 +26,8 @@
         <span class="flex opacity-40 shrink-0">{{template "ink_note_icon"}}</span>
         {{else if eq $t.ContainerKind "ink-live"}}
         <span class="flex shrink-0" style="color:var(--theme-accentRed);">{{template "ink_live_icon"}}</span>
+        {{else if eq $t.ContainerKind "chat"}}
+        <span class="font-mono font-bold text-[10.5px] leading-none tracking-[0.08em] text-tn-teal shrink-0" data-tab-tag="chat">CHAT</span>
         {{else if eq $t.Status "filed"}}
         <svg viewBox="0 0 24 24" class="w-3.5 h-3.5 opacity-40 shrink-0" fill="none" stroke-linecap="round" stroke-linejoin="round">
           <defs>

@@ -9,8 +9,9 @@
 // the block's target and names no mechanism. Here that becomes:
 //
 //   points (uri, not held) → the container, via window.sieveWorkspace.openAddress,
-//     which asks Go to resolve the address. The uri is OPAQUE on this side: no
-//     scheme test, no split, no pin rule.
+//     which asks Go to resolve the address, handed the text the target seeks
+//     there (a quote's text) when it carries one. The uri is OPAQUE on this
+//     side: no scheme test, no split, no pin rule.
 //
 //   holds (a non-`sieve/*` mime — a file this block itself holds) → a
 //     `sieve:reference-open-asset` INTENT on document, answered at the bottom of
@@ -41,11 +42,11 @@ import { ReferenceRenderer } from '../../../../renderers/reference-renderer.js'
     return (active && active.uuid) || ''
   }
 
-  /** The ONE place a target becomes an action. @param {{uri: string, title: string, held: boolean}} target */
+  /** The ONE place a target becomes an action. @param {{uri: string, title: string, held: boolean, seek?: string}} target */
   function openTarget(target, uuid) {
     if (!target) return
     if (!target.held) {
-      if (window.sieveWorkspace) window.sieveWorkspace.openAddress(target.uri)
+      if (window.sieveWorkspace) window.sieveWorkspace.openAddress(target.uri, target.seek)
       return
     }
     document.dispatchEvent(new CustomEvent(OPEN_ASSET_EVENT, {
@@ -126,6 +127,8 @@ import { ReferenceRenderer } from '../../../../renderers/reference-renderer.js'
         },
       },
       error: { default: '', parseHTML: function (el) { return el.getAttribute('data-error') || '' } },
+      rel: { default: '', parseHTML: function (el) { return el.getAttribute('data-rel') || '' } },
+      displayAs: { default: '', parseHTML: function (el) { return el.getAttribute('data-display-as') || '' } },
     },
 
     parseAttrs: function (data) {
@@ -133,6 +136,8 @@ import { ReferenceRenderer } from '../../../../renderers/reference-renderer.js'
         uri:   data.uri || '',
         cache: JSON.stringify(data.cache || null),
         error: data.error || '',
+        rel:   data.rel || '',
+        displayAs: data.displayAs || '',
       }
     },
 

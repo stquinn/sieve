@@ -35,10 +35,12 @@ func NewPromptService(st store.Store) (*PromptService, error) {
 		{Name: "file", DisplayName: "Smart Filing", Output: Data, Brief: Layer{Heading: briefHeading, Text: DefaultFilingPrompt}},
 		{Name: "explain", DisplayName: "Explain Content", Output: Content, Brief: Layer{Heading: briefHeading, Text: DefaultExplainPrompt}},
 		{Name: "ask", DisplayName: "In-context Chat", Output: Content, Brief: Layer{Heading: briefHeading, Text: DefaultAskPrompt}},
+		{Name: "chat", DisplayName: "Chat", Output: Content, Brief: Layer{Heading: briefHeading, Text: DefaultChatPrompt}},
 		{Name: "btw", DisplayName: "Quick Answer (/btw)", Output: Content, Brief: Layer{Heading: briefHeading, Text: DefaultBtwPrompt}},
 		{Name: "refine", DisplayName: "Language Detection", Output: Data, Brief: Layer{Heading: briefHeading, Text: DefaultRefinePrompt}},
 		{Name: "image", DisplayName: "Describe Image", Output: Data, Brief: Layer{Heading: briefHeading, Text: DefaultImagePrompt}},
 		{Name: "note-meta", DisplayName: "Name Handwritten Note", Output: Data, Brief: Layer{Heading: briefHeading, Text: DefaultNoteMetaPrompt}},
+		{Name: "chat-meta", DisplayName: "Name Chat", Output: Data, Brief: Layer{Heading: briefHeading, Text: DefaultChatMetaPrompt}},
 		{Name: "page-transcript", DisplayName: "Transcribe Handwritten Page", Output: Data, Brief: Layer{Heading: briefHeading, Text: DefaultPageTranscriptPrompt}},
 		{Name: "web-clip-fetch", DisplayName: "Web Clip — Fetch", Output: Data, Brief: Layer{Heading: briefHeading, Text: DefaultWebClipFetchPrompt}},
 		{Name: "web-clip-summarise", DisplayName: "Web Clip — Summarise", Output: Data, Brief: Layer{Heading: briefHeading, Text: DefaultWebClipSummarisePrompt}},
@@ -178,7 +180,7 @@ const directAnswerOnly = `- DIRECT ANSWER ONLY: The answer must only contain the
 
 // answerToolGuidance is the Delivery layer of a run that carries the Sieve
 // tools: its answer may be written as blocks with add_to_answer.
-const answerToolGuidance = `- ANSWER IN BLOCKS OR TEXT: You may write your answer as Sieve blocks with the add_to_answer tool, one block per call, in reading order. Whenever the answer holds anything richer than running text (a diagram, code, a table, other structured content), consider the block type that fits it; describe_answer lists them. A plain text answer may simply be your final message, in clean markdown. Once you have used add_to_answer your final message is not shown, so the whole answer must then be written with the tool.
+const answerToolGuidance = `- ANSWER IN BLOCKS OR TEXT: Favour writing your answer as Sieve blocks with the add_to_answer tool whenever it contains anything a Sieve block represents more richly than running text: code, a diagram, a table, other structured content. Write one block per call, in reading order; describe_answer lists the block types. An answer that is running text and nothing else may simply be your final message, in clean markdown. Once you have used add_to_answer your final message is not shown, so the whole answer must then be written with the tool.
 
 ` + directAnswerOnly
 
@@ -310,6 +312,25 @@ TARGET is the subject of the question and the sole source of document truth; gro
 THREAD is the conversation so far about this TARGET. Use it to understand follow-ups and to build on or expand earlier answers when the ACTION asks you to. THREAD answers were written against earlier versions of the TARGET, so when you quote or describe the document itself, always use TARGET as it stands now — not document text repeated inside THREAD.
 `
 
+const DefaultChatPrompt = `
+[PERSONA]
+Act as a highly efficient research assistant. Provide the answer concisely with insight, drawing connections from the user's notes.
+
+[RESPONSE PROTOCOL]
+
+- SYNTHESIZE: If information is gathered from multiple files (e.g., the knowledge base and the image), merge them into a single, cohesive response without citing the specific filenames unless they are requested.
+
+[TASK]
+You are continuing a conversation with the user. The user will provide a THREAD (the conversation so far), ABOUT when the question points at material, and the QUESTION to answer now.
+Your task is to answer the QUESTION clearly and concisely, as the next turn of the conversation.
+
+THREAD is the conversation so far, oldest first. Each turn is opened by a "===== TURN n =====" line and headed by its ADDRESS, then shows the question that was asked and the **ANSWER:** given to it. A question that pointed at something opens with a "QUESTION ABOUT:" line giving the addresses of what it pointed at. Use it to understand follow-ups and to build on or revise earlier answers when the QUESTION asks you to. A question that points at a turn names that turn's ADDRESS. When there is no THREAD, the QUESTION opens the conversation.
+
+ABOUT, when present, is the material the QUESTION points at: one or more blocks, each opened by a "===== BLOCK n of m · kind =====" line and headed by its ADDRESS. Ground anything you say about that material in ABOUT as it stands now.
+
+QUESTION is what to answer now. It has the same structure as a THREAD turn but no answer yet — that's what you provide.
+`
+
 const DefaultImagePrompt = `Describe the image file and help me describe and categorise it.
 
 Respond ONLY with valid JSON. No preamble.
@@ -328,6 +349,24 @@ Open each one, read the handwriting and look at any drawings, then describe the 
 - keywords: up to 8 keywords or short phrases for what the note covers.
 - categories: from 0 to 3 categories, chosen only from the Categories listed. Give none when none fits.
 - summary: two or three plain sentences saying what the note holds.
+
+Respond ONLY with raw JSON. DO NOT use markdown code fences (triple backticks). No preamble or explanation.
+{
+  "title": "Short specific title",
+  "keywords": ["keyword", "short phrase"],
+  "categories": ["category"],
+  "summary": "Two or three sentences."
+}
+`
+
+const DefaultChatMetaPrompt = `THREAD, under Data, is one conversation between a person and a model, oldest turn first. Each turn is opened by a "===== TURN n =====" line, then shows the question the person asked and the **ANSWER:** the model gave.
+
+Read the whole conversation, then describe it as a whole: what the person was asking about and what they came away with, not how the conversation went.
+
+- title: a short, specific title saying what the conversation is about, in at most eight words. Never a generic title such as "Chat", "Question", "Untitled" or "Conversation", and never a date alone.
+- keywords: up to 8 keywords or short phrases for what the conversation covers.
+- categories: from 0 to 3 categories, chosen only from the Categories listed. Give none when none fits.
+- summary: two or three plain sentences saying what the conversation holds.
 
 Respond ONLY with raw JSON. DO NOT use markdown code fences (triple backticks). No preamble or explanation.
 {

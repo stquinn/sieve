@@ -1,10 +1,14 @@
 package processors
 
 import (
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
+	"sieve/sieve/ai"
 	"sieve/sieve/block"
 	"sieve/sieve/domain"
 	"sieve/sieve/services"
@@ -80,4 +84,55 @@ func addressHeader(doc string, ids ...string) string {
 // newline-terminated.
 func documentHeader(doc string) string {
 	return "ADDRESS: " + domain.NewContainerAddress(doc).String() + "\n"
+}
+
+// recordingRunner is a CLI runner that runs nothing: it keeps the last run it is
+// handed and answers it with a fixed final message.
+type recordingRunner struct {
+	mu   sync.Mutex
+	last ai.Run
+}
+
+func (r *recordingRunner) Run(run ai.Run, _ ai.ResponseNote) (string, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.last = run
+	return "the final message", nil
+}
+
+// lastRun is the run the runner was last handed.
+func (r *recordingRunner) lastRun() ai.Run {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.last
+}
+
+// newRecordedAI is an AIService over a temporary store, in the smart tier,
+// whose CLI runs are kept by the runner it returns and never executed.
+func newRecordedAI(t *testing.T) (*ai.AIService, *recordingRunner) {
+	t.Helper()
+	ds, fs := newTestDocumentService(t)
+	state, err := services.NewStateService(fs, "", nil)
+	if err != nil {
+		t.Fatalf("NewStateService: %v", err)
+	}
+	// The tier probes the CLI binary on disk, so a stub that is never run stands
+	// in for one.
+	stub := filepath.Join(t.TempDir(), "stub-ai-cli")
+	if err := os.WriteFile(stub, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("write stub CLI: %v", err)
+	}
+	settings := domain.DefaultSettings()
+	settings.CLI, settings.CLIPath = "claude", stub
+	if err := state.SaveSettings(settings); err != nil {
+		t.Fatalf("SaveSettings: %v", err)
+	}
+	prompts, err := ai.NewPromptService(fs)
+	if err != nil {
+		t.Fatalf("NewPromptService: %v", err)
+	}
+	svc := ai.NewAIService(state, prompts, ds, nil, "")
+	runner := &recordingRunner{}
+	svc.SetRunner(runner)
+	return svc, runner
 }

@@ -480,6 +480,7 @@ describe('WysiwygSurface.applyContainerChange (placement, undo-sacred)', () => {
     const ed = fakeEditorOver(fxSchema, [build.p('one', 'b1')])
     const s = painted(ed)
     s.applyContainerChange(cue(['srv-1']), containerOf(['b1', 'srv-1'], {
+      b1: { id: 'b1', kind: 'prose', attrs: { id: 'b1', content: 'one' } },
       'srv-1': { id: 'srv-1', kind: 'prose', attrs: { id: 'srv-1', content: 'Hello' } },
     }))
     expect(docPosForBlockIndex).toHaveBeenCalledWith(ed.state.doc, 1)
@@ -547,6 +548,32 @@ describe('WysiwygSurface.applyContainerChange (placement, undo-sacred)', () => {
     }))
     expect(ed.calls.find((c) => c[0] === 'insertContentAt')).toBeUndefined()
     expect(ed.dispatched.length).toBe(0)
+  })
+
+  // A reference that declares how it is drawn is a block of the text whatever
+  // its rel: a quote in a draft is placed, refreshed and removed like any block.
+  it.each([
+    ['a rel and no displayAs is not body: its change is skipped', { rel: 'target' }, 0],
+    ['a rel and a displayAs is body: its change is refreshed', { rel: 'target', displayAs: 'quote' }, 1],
+    ['no rel is body: its change is refreshed', {}, 1],
+  ])('a reference with %s', (_name, attrs, refreshed) => {
+    const ed = fakeEditorOver(fxSchema, [build.reference('q-1'), build.p('after', 'b1')])
+    const s = painted(ed)
+    s.applyContainerChange(cue(['q-1']), containerOf(['q-1', 'b1'], {
+      'q-1': { id: 'q-1', kind: 'reference', attrs: Object.assign({ id: 'q-1', uri: 'sieve://other/x', ref: 'r-1' }, attrs) },
+    }))
+    expect(ed.dispatched.length).toBe(refreshed)
+  })
+
+  it('a block is placed at its index among the BODY blocks — a question element it does not hold is not counted', () => {
+    const ed = fakeEditorOver(fxSchema, [build.p('one', 'b1')])
+    const s = painted(ed)
+    s.applyContainerChange(cue(['srv-1']), containerOf(['att-1', 'b1', 'srv-1'], {
+      'att-1': { id: 'att-1', kind: 'reference', attrs: { id: 'att-1', uri: 'sieve://other', rel: 'attach' } },
+      b1: { id: 'b1', kind: 'prose', attrs: { id: 'b1', content: 'one' } },
+      'srv-1': { id: 'srv-1', kind: 'prose', attrs: { id: 'srv-1', content: 'Hello' } },
+    }))
+    expect(docPosForBlockIndex).toHaveBeenCalledWith(ed.state.doc, 1)
   })
 
   it('a block whose KIND changed is replaced by id — TRACKED, so a transform is undoable', () => {
@@ -2099,7 +2126,9 @@ describe('WysiwygSurface — a declined paste is ProseMirror\'s own paste (#193 
       await paste(ed, { 'text/plain': 'x := 1\ny := 2\nz := 3' })
       vi.setSystemTime(Date.now() + 600)
       s.applyContainerChange({ blockIds: ['srv-1'], orderChanged: false }, containerOf(['p1', 'srv-1', 'p3'], {
+        p1: { id: 'p1', kind: 'prose', attrs: { id: 'p1', content: 'before' } },
         'srv-1': { id: 'srv-1', kind: 'prose', attrs: { id: 'srv-1', content: 'pasted' } },
+        p3: { id: 'p3', kind: 'prose', attrs: { id: 'p3', content: 'after' } },
       }))
 
       expect(texts(ed)).toEqual(['before', 'pasted', 'after'])

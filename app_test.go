@@ -55,6 +55,7 @@ type menuChord struct {
 // host but which the menu no longer binds fails too.
 var menuTaxonomy = map[string]menuChord{
 	"Mod+N":            {item: "File › New Note", tier: inherited, why: "new document, universal"},
+	"Mod+Shift+N":      {item: "File › New Chat", tier: inherited, why: "Shift-variant of Mod+N new"},
 	"Mod+S":            {item: "File › Save", tier: inherited, why: "save, universal"},
 	"Mod+W":            {item: "File › Close Tab", tier: inherited, why: "close tab/window, universal"},
 	"Mod+Shift+O":      {item: "File › Open Library…", tier: inherited, why: "Shift-variant of Mod+O open"},
@@ -224,4 +225,23 @@ func TestBuildMenu_ChordTaxonomy(t *testing.T) {
 	for _, s := range stale {
 		t.Errorf("menuTaxonomy lists %s, but buildMenu binds no such chord", s)
 	}
+}
+
+// New Chat is File's item directly under New Note.
+func TestBuildMenu_NewChatSitsUnderNewNote(t *testing.T) {
+	app := &App{library: services.NewLibraryService(noRecents{}, nil)}
+	for _, top := range buildMenu(app).Items {
+		if top.Label != "File" {
+			continue
+		}
+		for i, item := range top.SubMenu.Items {
+			if item.Label == "New Note" {
+				if next := top.SubMenu.Items[i+1]; next.Label != "New Chat" {
+					t.Errorf("File › New Note is followed by %q, want New Chat", next.Label)
+				}
+				return
+			}
+		}
+	}
+	t.Fatal("no File › New Note in the menu")
 }

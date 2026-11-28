@@ -19,16 +19,10 @@ const KindDigitalNote = "digital-note"
 // StrokesKey is the asset key of a StrokeBasedNote's log, its source.
 const StrokesKey = "strokes.jsonl"
 
-// The .meta keys of a note's description beside display_name, summary and tags: its keywords and
-// categories as JSON arrays of strings, the seq of the log the description is of, the seq of the
-// description last sent to the tablet, and who gave its name (NamedBy).
-const (
-	metaKeywords   = "note_keywords"
-	metaCategories = "note_categories"
-	metaDescribed  = "note_meta_seq"
-	metaSent       = "note_meta_sent_seq"
-	metaNamedBy    = "note_named_by"
-)
+// metaSent is the .meta key of the seq of the description last sent to the tablet. A note's
+// description is kept under the keys domain.NoteMetadata.WriteTo writes, its MetaKeyDescribed the
+// seq of the log it is of, and who gave its name (NamedBy) under domain.MetaKeyNamedBy.
+const metaSent = "note_meta_sent_seq"
 
 // NamedBy is who gives a Digital Note the name it is called by, as its .meta note_named_by holds
 // it: the namer, from its pages, unless a person or its tablet does.
@@ -38,7 +32,7 @@ const (
 	// NamedByNamer is a note the namer names, its name the display_name of its description.
 	NamedByNamer NamedBy = ""
 	// NamedByHand is a note a person named, its name their display_name.
-	NamedByHand NamedBy = "hand"
+	NamedByHand NamedBy = domain.MetaNamedByHand
 	// NamedByTablet is a note called by the title its tablet wrote, which has no display_name.
 	NamedByTablet NamedBy = "tablet"
 )
@@ -183,7 +177,7 @@ func (k DigitalNoteKind) Face(b domain.SieveBlock) map[string]string {
 		"note_properties": string(propsJSON),
 	}
 	if props.One("type") == diaryType {
-		face[metaNamedBy] = string(NamedByTablet)
+		face[domain.MetaKeyNamedBy] = string(NamedByTablet)
 	}
 	return face
 }
@@ -290,30 +284,10 @@ func (k DigitalNoteKind) ContainerName(b domain.SieveBlock, meta map[string]stri
 	return k.Name(meta, b.StringAttr("title"))
 }
 
-// Describe writes d into meta as the description of the note's log to seq: Title as display_name,
-// unless the note's NamedBy is Kept, Summary, Keywords as tags, and Keywords and Categories whole
-// under the kind's own keys. A comma in a keyword is a semicolon in tags, whose stored form splits
-// on commas.
+// Describe writes d into meta as the description of the note's log to seq, as
+// domain.NoteMetadata.WriteTo writes it, keeping the note's name when its NamedBy is Kept.
 func (k DigitalNoteKind) Describe(meta domain.DocumentMeta, d domain.NoteMetadata, seq uint32) {
-	if !k.NamedBy(meta.All()).Kept() {
-		meta.SetDisplayName(strings.TrimSpace(d.Title))
-	}
-	summary := strings.TrimSpace(d.Summary)
-	if summary == "" {
-		meta.SetSummary(nil)
-	} else {
-		meta.SetSummary(&summary)
-	}
-	tags := make([]string, 0, len(d.Keywords))
-	for _, kw := range d.Keywords {
-		if tag := strings.TrimSpace(strings.ReplaceAll(kw, ",", ";")); tag != "" {
-			tags = append(tags, tag)
-		}
-	}
-	meta.SetTags(tags)
-	all := meta.All()
-	all[metaKeywords], all[metaCategories] = k.terms(d.Keywords), k.terms(d.Categories)
-	all[metaDescribed] = strconv.FormatUint(uint64(seq), 10)
+	d.WriteTo(meta, k.NamedBy(meta.All()).Kept(), uint64(seq))
 }
 
 // NameByHand writes into meta name as the note's name given by a person, which Describe keeps and
@@ -324,34 +298,30 @@ func (k DigitalNoteKind) NameByHand(meta domain.DocumentMeta, name string) {
 	all := meta.All()
 	delete(all, metaSent)
 	if name != "" {
-		all[metaNamedBy] = string(NamedByHand)
+		all[domain.MetaKeyNamedBy] = string(NamedByHand)
 		return
 	}
-	delete(all, metaNamedBy)
-	delete(all, metaDescribed)
+	delete(all, domain.MetaKeyNamedBy)
+	delete(all, domain.MetaKeyDescribed)
 }
 
 // NamedBy is who gives the note whose .meta is meta its name.
 func (k DigitalNoteKind) NamedBy(meta map[string]string) NamedBy {
-	return NamedBy(meta[metaNamedBy])
+	return NamedBy(meta[domain.MetaKeyNamedBy])
 }
 
 // Description is the description meta holds and the seq it is of, its Title the name Sieve gave
 // the note (given); false when it is of no seq and no person named the note.
 func (k DigitalNoteKind) Description(meta map[string]string) (domain.NoteMetadata, uint32, bool) {
-	seq := k.seq(meta, metaDescribed)
-	d := domain.NoteMetadata{Title: k.given(meta), Summary: meta["summary"]}
-	if d.Summary == "null" {
-		d.Summary = ""
-	}
-	_ = json.Unmarshal([]byte(meta[metaKeywords]), &d.Keywords)
-	_ = json.Unmarshal([]byte(meta[metaCategories]), &d.Categories)
+	seq := k.seq(meta, domain.MetaKeyDescribed)
+	d := domain.NoteMetadata{Title: k.given(meta)}
+	d.ReadFrom(meta)
 	return d, seq, seq > 0 || k.NamedBy(meta) == NamedByHand
 }
 
 // DescribedSeq is the seq of the log meta's description is of, 0 when it holds none.
 func (k DigitalNoteKind) DescribedSeq(meta map[string]string) uint32 {
-	return k.seq(meta, metaDescribed)
+	return k.seq(meta, domain.MetaKeyDescribed)
 }
 
 // SentSeq is the seq of the description last sent to the tablet, 0 when none was.
@@ -376,15 +346,6 @@ func (k DigitalNoteKind) seq(meta map[string]string, key string) uint32 {
 	return uint32(seq)
 }
 
-// terms is list as a JSON array of strings, [] for none.
-func (k DigitalNoteKind) terms(list []string) string {
-	if list == nil {
-		list = []string{}
-	}
-	raw, _ := json.Marshal(list)
-	return string(raw)
-}
-
 func (k DigitalNoteKind) IsSupportedContent([]block.ContentEntry) block.SupportedActions {
 	return block.SupportedActions{Kind: KindDigitalNote}
 }
@@ -397,7 +358,7 @@ func (k DigitalNoteKind) DescribeJob(block.JobContext) *block.ProcessorJob { ret
 func (k DigitalNoteKind) OnChange(*domain.SieveBlock)                      {}
 func (k DigitalNoteKind) Mode() block.BlockMode                            { return block.BlockModeBlock }
 
-func (k DigitalNoteKind) BuildContext(domain.SieveBlock, block.DocView, map[string]bool) block.AIContext {
+func (k DigitalNoteKind) BuildContext(domain.SieveBlock, block.ContainerView, map[string]bool) block.AIContext {
 	return block.AIContext{}
 }
 

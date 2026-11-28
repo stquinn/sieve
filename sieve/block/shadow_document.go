@@ -15,13 +15,15 @@ const DefaultAutosaveDebounce = 30 * time.Second
 // ShadowDocument holds the in-memory editor state for one open document.
 // Whether the markdown-mode raw buffer is authoritative (rawAuthoritative)
 // controls how Flush and Remux behave — see rawAuthoritative below.
+//
+// Its block tree and the job protocol are the embedded LiveBlocks. In WYSIWYG
+// mode that tree is the single source of truth for what gets saved
+// (ContentForSave just serializes it); markdown is derived on demand, never
+// stored. The document's own state below is guarded by the embedded mu, the
+// document's one lock; LiveBlocks' hook is resetDebounce.
 type ShadowDocument struct {
+	LiveBlocks
 	UUID string
-	// Blocks is the authoritative ordered block tree (spec §2), held DIRECTLY —
-	// no BlockDoc wrapper, no nested "document inside a document". In WYSIWYG mode
-	// it is the single source of truth for what gets saved (ContentForSave just
-	// serializes it); markdown is derived on demand, never stored.
-	Blocks []domain.SieveBlock
 	// mdModeBuffer holds the raw text the user edits in MARKDOWN MODE ONLY. In
 	// WYSIWYG mode the tree (Doc) is authoritative and whole-doc markdown is
 	// derived on demand (deriveMarkdown) — there is no stored markdown to drift
@@ -43,7 +45,6 @@ type ShadowDocument struct {
 	codec          *DocumentCodec
 	debounce       time.Duration
 	closed         bool // set by StopDebounce; prevents re-arming after Close
-	mu             sync.Mutex
 	// flushMu serializes whole-document writes (WithFlushLock). It is SEPARATE from
 	// mu so a flush's disk I/O does not block tree mutations (which take mu): the
 	// slow part runs under flushMu only, the brief tree snapshot under mu. Scoped to
@@ -81,12 +82,13 @@ func NewShadow(uuid, body string, codec *DocumentCodec, debounce time.Duration, 
 	// DocumentMigrator is not run inside Deserialize.
 	blocks, migrated := DocumentMigrator{}.Migrate(blocks, uuid)
 	s := &ShadowDocument{
-		UUID:     uuid,
-		Blocks:   blocks,
-		codec:    codec,
-		debounce: debounce,
-		onFlush:  onFlush,
+		LiveBlocks: LiveBlocks{Blocks: blocks},
+		UUID:       uuid,
+		codec:      codec,
+		debounce:   debounce,
+		onFlush:    onFlush,
 	}
+	s.changed = s.resetDebounce
 	if migrated {
 		// The upgrade MUST reach disk, or a legacy document would mint different
 		// ids on every open (or keep serving a dead asset route) and any address
@@ -129,7 +131,7 @@ func (s *ShadowDocument) reparseDoc(md string) {
 // holds s.mu; the transient DocView shares the slice read-only under that lock,
 // so the single derivation logic lives on DocView.
 func (s *ShadowDocument) deriveMarkdown() string {
-	return DocView{UUID: s.UUID, rawAuthoritative: s.rawAuthoritative, mdModeBuffer: s.mdModeBuffer, Blocks: s.Blocks, codec: s.codec}.deriveMarkdown()
+	return DocView{ContainerAddressing: ContainerAddressing{UUID: s.UUID}, rawAuthoritative: s.rawAuthoritative, mdModeBuffer: s.mdModeBuffer, Blocks: s.Blocks, codec: s.codec}.deriveMarkdown()
 }
 
 // Export renders the LIVE document through generator: each block surviving the
@@ -139,7 +141,7 @@ func (s *ShadowDocument) deriveMarkdown() string {
 func (s *ShadowDocument) Export(filter BlockFilter, generator ExportGenerator) string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return DocView{UUID: s.UUID, rawAuthoritative: s.rawAuthoritative, mdModeBuffer: s.mdModeBuffer, Blocks: s.Blocks, codec: s.codec}.deriveExport(filter, generator)
+	return DocView{ContainerAddressing: ContainerAddressing{UUID: s.UUID}, rawAuthoritative: s.rawAuthoritative, mdModeBuffer: s.mdModeBuffer, Blocks: s.Blocks, codec: s.codec}.deriveExport(filter, generator)
 }
 
 func (s *ShadowDocument) SetMarkdown(md string) {
@@ -151,41 +153,6 @@ func (s *ShadowDocument) SetMarkdown(md string) {
 		s.reparseDoc(md)
 	}
 	s.resetDebounce()
-}
-
-// MergeBlock creates or patches the named block — a top-level block or an
-// element of one — applying the merge semantic
-// (SieveBlock.Merge: attrs additive, aliases replaced when present). For a new id
-// it appends a fresh block. kind is only used when creating the entry; subsequent
-// merges preserve the existing Kind. The locked entry point for external callers;
-// applyOpTo's update-block calls SieveBlock.Merge directly under its own lock.
-func (s *ShadowDocument) MergeBlock(patch domain.SieveBlock) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if b := s.findBlock(patch.ID); b != nil {
-		b.Merge(patch)
-	} else {
-		nb := domain.SieveBlock{ID: patch.ID, Kind: patch.Kind}
-		nb.Merge(patch)
-		s.Blocks = append(s.Blocks, nb)
-	}
-	s.resetDebounce()
-}
-
-// PatchBlock merges patch into the block it names — a top-level block or an
-// element of one — when the document still holds it, and reports whether it
-// did. Unlike MergeBlock it never creates one: a job's result for a block that
-// has since gone has nowhere to land.
-func (s *ShadowDocument) PatchBlock(patch domain.SieveBlock) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	b := s.findBlock(patch.ID)
-	if b == nil {
-		return false
-	}
-	b.Merge(patch)
-	s.resetDebounce()
-	return true
 }
 
 // ReplaceBlock swaps the block with id for newBlock AT THE SAME INDEX, preserving
@@ -228,19 +195,6 @@ func (s *ShadowDocument) stated(op BlockOp) (domain.SieveBlock, bool) {
 	return domain.NewSieveBlock(op.Kind, op.BlockID, op.Attrs), false
 }
 
-// IndexOfBlock returns the top-level position of id, or -1 if this document does
-// not hold it. Caller must NOT hold s.mu.
-func (s *ShadowDocument) IndexOfBlock(id string) int {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for i := range s.Blocks {
-		if s.Blocks[i].ID == id {
-			return i
-		}
-	}
-	return -1
-}
-
 // ResolveAnchor returns the top-level index a block anchored at a takes in this
 // document: one past the anchor block, 0 for the front, and AppendIndex both for
 // an absent anchor and for one naming a block this document does not hold. See
@@ -257,16 +211,6 @@ func (s *ShadowDocument) ResolveAnchor(a Anchor) int {
 		return at + 1
 	}
 	return AppendIndex
-}
-
-// DeleteBlockAttr removes a single key from an existing block's attrs.
-// Used to expunge transient fields (e.g. hint) that a job has consumed.
-func (s *ShadowDocument) DeleteBlockAttr(blockID, key string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if b := s.findBlock(blockID); b != nil {
-		delete(b.Attrs, key)
-	}
 }
 
 func (s *ShadowDocument) resetDebounce() {
@@ -325,92 +269,6 @@ func (s *ShadowDocument) ApplyOp(op BlockOp) error {
 	}
 	s.resetDebounce()
 	return nil
-}
-
-// BlockIDs returns the top-level child ids in document order — the container's
-// order as a value, without the blocks hanging off it.
-func (s *ShadowDocument) BlockIDs() []string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	ids := make([]string, len(s.Blocks))
-	for i, b := range s.Blocks {
-		ids[i] = b.ID
-	}
-	return ids
-}
-
-// findBlock returns a pointer to the block with the given ID within the live
-// tree — a top-level block or an element of one — or nil. ASSUMES s.mu is held
-// by the caller. A top-level pointer aliases the live slice; an element's
-// carries the attrs map stored in its parent's payload, so an attr written
-// through it lands in what the parent persists, and nothing else of it does.
-func (s *ShadowDocument) findBlock(id string) *domain.SieveBlock {
-	b, _ := s.locate(s.Blocks, id)
-	return b
-}
-
-// locate finds the block id among blocks — at the top level, or as an element
-// of one, at any depth — and returns it with the top-level block that is it or
-// holds it, or nil. Caller holds s.mu when blocks is the live tree.
-func (s *ShadowDocument) locate(blocks []domain.SieveBlock, id string) (found, top *domain.SieveBlock) {
-	for i := range blocks {
-		if blocks[i].ID == id {
-			return &blocks[i], &blocks[i]
-		}
-	}
-	for i := range blocks {
-		if el := s.elementOf(&blocks[i], id); el != nil {
-			return el, &blocks[i]
-		}
-	}
-	return nil, nil
-}
-
-// elementOf finds the element id among the elements parent holds, at any
-// depth, or nil.
-func (s *ShadowDocument) elementOf(parent *domain.SieveBlock, id string) *domain.SieveBlock {
-	holder, ok := GetProcessor(parent.Kind).(BlockParent)
-	if !ok {
-		return nil
-	}
-	for _, el := range holder.Children(parent) {
-		if el.ID == id {
-			return el
-		}
-		if deeper := s.elementOf(el, id); deeper != nil {
-			return deeper
-		}
-	}
-	return nil
-}
-
-// SnapshotHolder returns a deep copy of the top-level block that is id or holds
-// it as an element, or false if the document holds neither. It is the block a
-// change to an element is told to the client as.
-func (s *ShadowDocument) SnapshotHolder(id string) (domain.SieveBlock, bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if _, top := s.locate(s.Blocks, id); top != nil {
-		return top.Clone(), true
-	}
-	return domain.SieveBlock{}, false
-}
-
-// eachBlock calls fn for every block of the live tree, top-level blocks and
-// their elements at any depth. Caller holds s.mu.
-func (s *ShadowDocument) eachBlock(fn func(b *domain.SieveBlock)) {
-	var walk func(b *domain.SieveBlock)
-	walk = func(b *domain.SieveBlock) {
-		fn(b)
-		if holder, ok := GetProcessor(b.Kind).(BlockParent); ok {
-			for _, el := range holder.Children(b) {
-				walk(el)
-			}
-		}
-	}
-	for i := range s.Blocks {
-		walk(&s.Blocks[i])
-	}
 }
 
 // AppendIndex is the document position meaning "after everything else".

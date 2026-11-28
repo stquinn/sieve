@@ -237,7 +237,7 @@ func (p *DiagramProcessor) needsRender(blk domain.SieveBlock) bool {
 	return prev != p.renderHash(p.effectiveSource(source))
 }
 
-func (p *DiagramProcessor) BuildContext(blk domain.SieveBlock, doc block.DocView, _ map[string]bool) block.AIContext {
+func (p *DiagramProcessor) BuildContext(blk domain.SieveBlock, doc block.ContainerView, _ map[string]bool) block.AIContext {
 	src, _ := blk.Attrs["source"].(string)
 	if strings.TrimSpace(src) == "" {
 		return block.AIContext{}
@@ -483,38 +483,20 @@ func (p *DiagramProcessor) renderHash(effective string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// saveAsset persists the rendered SVG as an asset, attaches it to the document,
-// and returns its absolute sieve address (sieve://{uuid}/{key}). When existingKey names an
+// saveAsset persists the rendered SVG as an asset of the container uuid and returns its absolute sieve address (sieve://{uuid}/{key}). When existingKey names an
 // asset of this document, its key is reused verbatim, so repeated renders and
 // theme switches overwrite that asset rather than accumulating files; a key held
 // by another document is never written to.
 func (p *DiagramProcessor) saveAsset(uuid, blockID, existingKey string, data []byte) (string, error) {
-	cat := domain.WorkingCopy
-	var doc domain.Document
-	if d, err := p.svc.Documents.LoadByUUID(uuid); err == nil {
-		doc = d
-		if doc.Kind() == domain.KindNote {
-			cat = domain.LibraryCategory
-		}
-	}
-
 	assetID := ident.New() + ".svg"
 	self := domain.NewContainerAddress(uuid)
 	if addr, err := domain.ResolveAssetReference(existingKey, self); err == nil && addr.Container == self.Container {
 		assetID = addr.Leaf
 	}
 
-	asset, err := p.svc.Assets.Save(cat, uuid, assetID, data)
+	asset, err := p.svc.Assets.Save(uuid, assetID, data)
 	if err != nil {
 		return "", err
-	}
-
-	if doc != nil {
-		doc.Storable().AttachAsset(asset.Storable())
-		if _, err := p.svc.Documents.Save(doc); err != nil {
-			// Non-fatal: asset is saved; attachment metadata will be missing.
-			logger.Warn("diagram: doc save after attach failed", "block", blockID, "err", err)
-		}
 	}
 
 	return domain.NewLeafAddress(uuid, asset.Storable().Key()).String(), nil

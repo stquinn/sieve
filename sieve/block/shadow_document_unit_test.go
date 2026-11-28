@@ -3,6 +3,7 @@ package block
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"sieve/sieve/domain"
 )
@@ -37,10 +38,10 @@ func TestContentForSave_replacesBlockInWysiwyg(t *testing.T) {
 	shadow := &ShadowDocument{
 		UUID:  "test-uuid",
 		codec: NewDocumentCodec(GlobalRegistry()),
-		Blocks: []domain.SieveBlock{
+		LiveBlocks: LiveBlocks{Blocks: []domain.SieveBlock{
 			{ID: "fk-1", Kind: "fk", Attrs: map[string]interface{}{"id": "fk-1", "response": "Old answer"}},
 			{ID: "fk-2", Kind: "fk", Attrs: map[string]interface{}{"id": "fk-2", "keep": "me"}},
-		},
+		}},
 	}
 
 	shadow.MergeBlock(domain.SieveBlock{ID: "fk-1", Kind: "fk", Attrs: map[string]interface{}{"response": "New answer"}})
@@ -57,59 +58,13 @@ func TestContentForSave_replacesBlockInWysiwyg(t *testing.T) {
 	}
 }
 
-func TestShadowDocument_setBlockCreatesEntry(t *testing.T) {
-	shadow := &ShadowDocument{UUID: "test-uuid"}
-
-	shadow.MergeBlock(domain.SieveBlock{
-		Kind:  "code",
-		ID:    "cb-0001",
-		Attrs: map[string]interface{}{"id": "cb-0001", "source": "fmt.Println()"},
-	})
-
-	blk := shadow.findBlockIn("cb-0001")
-	if blk == nil {
-		t.Fatal("expected block cb-0001 to exist")
-	}
-	if blk.Kind != "code" {
-		t.Errorf("expected Kind=code, got %q", blk.Kind)
-	}
-}
-
-func TestShadowDocument_setBlockMergesAttrs(t *testing.T) {
-	shadow := &ShadowDocument{
-		UUID: "test-uuid",
-		Blocks: []domain.SieveBlock{
-			{ID: "cb-0001", Kind: "code", Attrs: map[string]interface{}{
-				"id": "cb-0001", "source": "old", "language": "unknown",
-			}},
-		},
-	}
-
-	shadow.MergeBlock(domain.SieveBlock{
-		Kind:  "code",
-		ID:    "cb-0001",
-		Attrs: map[string]interface{}{"language": "python", "status": "COMPLETE"},
-	})
-
-	blk := shadow.findBlockIn("cb-0001")
-	if blk.Attrs["source"] != "old" {
-		t.Errorf("expected source to be preserved, got %v", blk.Attrs["source"])
-	}
-	if blk.Attrs["language"] != "python" {
-		t.Errorf("expected language=python, got %v", blk.Attrs["language"])
-	}
-	if !strings.Contains(blk.StringAttr("status"), "COMPLETE") {
-		t.Errorf("expected status merged, got %v", blk.Attrs["status"])
-	}
-}
-
 // ResolveAnchor is the whole translation between how the wire names a position
 // (the block it follows) and the index every insertion path takes. These five
 // statements are all an anchor can make.
 func TestShadowDocument_ResolveAnchor(t *testing.T) {
 	shadow := &ShadowDocument{
-		UUID:   "test-uuid",
-		Blocks: []domain.SieveBlock{{ID: "b1", Kind: "code"}, {ID: "b2", Kind: "code"}, {ID: "b3", Kind: "code"}},
+		UUID:       "test-uuid",
+		LiveBlocks: LiveBlocks{Blocks: []domain.SieveBlock{{ID: "b1", Kind: "code"}, {ID: "b2", Kind: "code"}, {ID: "b3", Kind: "code"}}},
 	}
 	for _, tc := range []struct {
 		name   string
@@ -134,9 +89,37 @@ func TestShadowDocument_ResolveAnchor(t *testing.T) {
 // A resolved AppendIndex must reach the end of the document, never the front —
 // the direction a naive negative clamp gets wrong.
 func TestShadowDocument_insertBlockAtAppendsOnAppendIndex(t *testing.T) {
-	shadow := &ShadowDocument{UUID: "test-uuid", Blocks: []domain.SieveBlock{{ID: "b1"}, {ID: "b2"}}}
+	shadow := &ShadowDocument{UUID: "test-uuid", LiveBlocks: LiveBlocks{Blocks: []domain.SieveBlock{{ID: "b1"}, {ID: "b2"}}}}
 	shadow.insertBlockAt(AppendIndex, domain.SieveBlock{ID: "new"})
 	if got := shadow.Blocks[len(shadow.Blocks)-1].ID; got != "new" {
 		t.Errorf("AppendIndex must land at the end; document is %v", shadow.Blocks)
+	}
+}
+
+// A document's LiveBlocks hook is its autosave: a job's patch arms the
+// debounce, and a job's claim does not.
+func TestShadowDocument_liveBlocksHookArmsTheDebounce(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		op    func(s *ShadowDocument)
+		armed bool
+	}{
+		{"PatchBlock", func(s *ShadowDocument) {
+			s.PatchBlock(domain.SieveBlock{ID: "b", Attrs: map[string]interface{}{"k": "v"}})
+		}, true},
+		{"TryDispatch", func(s *ShadowDocument) { s.TryDispatch("b") }, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			shadow := NewShadow("test-uuid", "", NewDocumentCodec(GlobalRegistry()), time.Hour, func() {})
+			t.Cleanup(shadow.StopDebounce)
+			shadow.Blocks = []domain.SieveBlock{{ID: "b", Kind: "code", Attrs: map[string]interface{}{"status": BlockStatusPending}}}
+			tc.op(shadow)
+			shadow.mu.Lock()
+			armed := shadow.timer != nil
+			shadow.mu.Unlock()
+			if armed != tc.armed {
+				t.Errorf("debounce armed = %v, want %v", armed, tc.armed)
+			}
+		})
 	}
 }

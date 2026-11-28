@@ -22,6 +22,9 @@ import { ContractViolation } from '../contract/sieve-block.js'
  *   invalidation
  * @property {boolean} document whether the container is a document, which is
  *   what has an export
+ * @property {boolean} [pinsAskPanel] whether the workspace's Ask panel is
+ *   pinned open, and cannot be dismissed, while the container's tab is active;
+ *   absent is false
  */
 
 export class LensTable {

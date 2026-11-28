@@ -380,21 +380,26 @@ func TestRouter_TargetSurfacesTheGrammarAndDanglingSentinels(t *testing.T) {
 	}
 }
 
-// The two real sources federate: each uuid reaches the source that owns its type,
+// The real sources federate: each uuid reaches the source that owns its type,
 // and a block's OpenTarget carries the block kind.
-func TestRouter_FederatesDocumentsAndBlockContainers(t *testing.T) {
-	containers, ds, _ := newTestContainers(t)
-	router := NewRouter(NewNotesSource(ds), NewBlockSource(containers))
+func TestRouter_FederatesDocumentsChatsAndBlockContainers(t *testing.T) {
+	chats, containers, ds, _ := newTestChats(t)
+	router := NewRouter(NewNotesSource(ds), NewChatSource(chats), NewBlockSource(containers))
 
 	note := seedFiledNote(t, ds, "A Note", "", nil, "", "body")
 	c, err := containers.Create(containerKind, map[string]interface{}{"title": "A Sticky"})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
+	chat, err := chats.Create("A Chat")
+	if err != nil {
+		t.Fatalf("Create chat: %v", err)
+	}
 
 	for _, tc := range []struct{ uuid, kind, title string }{
 		{note.UUID(), string(domain.KindNote), "A Note"},
 		{c.UUID(), containerKind, "A Sticky"},
+		{chat.UUID(), domain.ChatKind, "A Chat"},
 	} {
 		target, err := router.Target("sieve://" + tc.uuid)
 		if err != nil {
@@ -408,7 +413,7 @@ func TestRouter_FederatesDocumentsAndBlockContainers(t *testing.T) {
 	if _, err := router.Target("sieve://" + testMissingUUID); !errors.Is(err, domain.ErrNodeNotFound) {
 		t.Errorf("missing uuid: err = %v, want ErrNodeNotFound", err)
 	}
-	if hits := router.Search(domain.SearchCriteria{}); len(hits) != 1 || hits[0].Container() != note.UUID() {
-		t.Errorf("Search = %+v, want the note and never the block container", hits)
+	if hits := router.Search(domain.SearchCriteria{}); len(hits) != 2 || hits[0].Container() != note.UUID() || hits[1].Container() != chat.UUID() {
+		t.Errorf("Search = %+v, want the note and the chat and never the block container", hits)
 	}
 }

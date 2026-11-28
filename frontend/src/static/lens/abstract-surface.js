@@ -15,7 +15,7 @@
  * An editor-domain event a surface REPORTS OUTWARD via the host editor's
  * `onSurfaceEvent` handler — producer-named plain data, never a consumer name: a
  * surface must not know an Ask panel or toolbar exists.
- * @typedef {{type: string, feature?: string, uuid?: string, x?: number, y?: number,
+ * @typedef {{type: string, feature?: string, uuid?: string, uri?: string, seek?: string, blockId?: string, text?: string, x?: number, y?: number,
  *   items?: ReadonlyArray<import('../renderers/action-list.js').ContextMenuItem>}} SurfaceEventMsg
  */
 /**
@@ -57,14 +57,27 @@ export const SurfaceEvent = Object.freeze({
  * The `type` of each surface event that asks the host for something rather than
  * reporting what happened. Each carries what the host needs to answer it:
  *
- *   open-container   uuid — open that container in a tab of its own
+ *   open-container   uuid OR uri, and optionally seek — open what it names in
+ *                    a tab of its own: a container's uuid the lens was handed,
+ *                    or an address the lens was handed, passed on as it was
+ *                    given. `seek`, beside a `uri`, is the text the opener is
+ *                    looking for at that address, handed on to the lens that
+ *                    reveals it (Lens.reveal) and read by nothing between
  *   context-menu     x, y, items — show the app's context menu of `items` at
  *                    that client point. A surface raises it with no items; the
  *                    lens it reports to supplies them.
+ *   quote            blockId, text — the reader quoted `text`, as quoted,
+ *                    from the block `blockId` of the container the lens shows:
+ *                    put a quote of it into the message being written, once.
+ *                    It is a hand-over and not a selection: raising it neither
+ *                    moves the lens's selection nor reports a selection change,
+ *                    and a selection that moves is never a quote. Blank text is
+ *                    no quote.
  */
 export const SurfaceIntent = Object.freeze({
   OPEN_CONTAINER: 'open-container',
   CONTEXT_MENU: 'context-menu',
+  QUOTE: 'quote',
 })
 
 export class AbstractSurface {
@@ -261,8 +274,10 @@ export class AbstractSurface {
 
   /**
    * The surface's own scroller position — the SCROLL_CHANGED feed hook, mirroring
-   * feedSelection. `null` when the surface has no live scroller yet; the model
-   * treats null as "nothing to report".
+   * feedSelection. The number is in the surface's own measure, which the host
+   * keeps without reading and hands back to `applyScroll`. `null` when the
+   * surface has no live scroller yet; the model treats null as "nothing to
+   * report".
    * @returns {number|null}
    */
   feedScroll() { return null }
@@ -271,7 +286,8 @@ export class AbstractSurface {
    * Restores (or parks) the surface's scroller position — the symmetric WRITE side
    * of feedScroll. Called both on a fresh document load and via applyPosition, to
    * preserve scroll across a same-session reload. `null`/`undefined` means leave
-   * it alone; 0 is a real, valid park-at-top value.
+   * it alone; 0 is a real value, where the surface presents a container it has
+   * never shown (a document's top).
    * @param {number|null|undefined} value
    */
   applyScroll(value) { /* base: nothing to scroll */ }

@@ -19,6 +19,12 @@ type FrontendBlock struct {
 	Aliases []string               `json:"aliases,omitempty"`
 }
 
+// SieveBlock is the block this wire block describes: the same id, kind, attrs and aliases. The
+// attrs are shared, not copied.
+func (b FrontendBlock) SieveBlock() domain.SieveBlock {
+	return domain.SieveBlock{ID: b.ID, Kind: b.Kind, Attrs: b.Attrs, Aliases: b.Aliases}
+}
+
 // BlockDocToFrontendBlocks projects an ordered BlockDoc into the flat
 // []FrontendBlock the WYSIWYG load sends to the client. Every kind carries its
 // payload in Attrs (prose's body is Attrs["content"], the same bag code keeps

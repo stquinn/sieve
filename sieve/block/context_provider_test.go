@@ -15,7 +15,7 @@ type mockContextProcessor struct {
 
 func (m *mockContextProcessor) Kind() string { return m.FencedDeserializer.Kind }
 
-func (m *mockContextProcessor) BuildContext(block domain.SieveBlock, doc DocView, seen map[string]bool) AIContext {
+func (m *mockContextProcessor) BuildContext(block domain.SieveBlock, doc ContainerView, seen map[string]bool) AIContext {
 	if m.buildFn != nil {
 		return AIContext{Content: m.buildFn(block)}
 	}

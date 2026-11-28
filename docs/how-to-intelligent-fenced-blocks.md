@@ -534,6 +534,7 @@ When a block is used as context for a follow-up AI question, send clean prose �
 |------------|---------------------------|
 | `ai-block` | `question` + `answer` as `**Q:**` / `**A:**`. Both are LISTS of elements (each a `{kind, attrs}` child block), never strings — read them through `QuestionList`, which is the one place that knows the encoding |
 | `web-clip` | `title`, `source` URL, and `content` (the fetched/summarised text) |
+| `reference` | what it is called (`cache.title`), its `uri`, its type and `cache.summary`; a held file also its path. Root attrs are the pointing (`uri`, `rel`, `displayAs`, `status`, `error`); `cache` is what was taken from the target. A quote (`displayAs: quote`) also carries the text the reader quoted, `cache.quote`, which no resolve touches, as its `Specifically regarding` line |
 | `diagram` *(future)* | diagram description/caption + the diagram source (e.g. Mermaid syntax) as a labelled code block |
 | Any block | Whatever a human would read to understand what the block *contains* — not the YAML wrapper |
 

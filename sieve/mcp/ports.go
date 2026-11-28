@@ -29,7 +29,7 @@ type SearchService = domain.SearchService
 // AnswerVocabulary is what add_to_answer and describe_answer need of the kinds
 // an answer can be written in: their cards, and an element built from a content
 // type and the map a model supplied, through the kind's own processor, for an
-// answer held in document container ("" when none holds it). A refusal
+// answer held in the open container named by container ("" when none holds it). A refusal
 // is an error whose text the model is shown. block.Registry implements it and the
 // composition root injects it.
 //

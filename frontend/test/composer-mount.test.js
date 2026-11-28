@@ -163,6 +163,102 @@ describe('ComposerMount — the harvest of what was attached', () => {
   })
 })
 
+// ── A QUOTE GOES INTO THE DRAFT AS A BLOCK, AFTER THE CARET'S BLOCK ─────────
+//
+// The draft is a list of blocks, and a quote is one of them: it goes in after
+// the block the caret is in, or last with no caret in the draft, and the
+// harvest carries it where it is, with its attrs, like any other element.
+describe('ComposerMount — a quote put into the draft', () => {
+  beforeEach(() => { vi.spyOn(ComposerEditor.prototype, 'presentSurface').mockImplementation(() => /** @type {any} */ (null)) })
+  afterEach(() => { vi.restoreAllMocks() })
+
+  const CHAT = '0198c1a0-0000-7000-8000-0000000000c1'
+  /** @param {string} text */
+  const quote = (text) => /** @type {any} */ (QuestionList.quotation(CHAT, '0198c1a0-0000-7000-8000-0000000000e1', text))
+
+  /** A mount whose draft holds `contents` as prose blocks blk-0…, with the caret
+   *  in the block named `caret` (null: in none). @param {string|null} caret @param {...string} contents */
+  function drafted(caret, ...contents) {
+    const mount = new ComposerMount(document.createElement('div'))
+    const editor = /** @type {ComposerEditor} */ (mount.open())
+    const provider = /** @type {InMemoryContainerProvider} */ (mount.provider)
+    contents.forEach((content, i) => provider.requestAddBlock('prose', { id: 'blk-' + i, content }))
+    vi.spyOn(editor, 'getSelectionContext').mockReturnValue(/** @type {any} */ ({ blockId: caret }))
+    return mount
+  }
+
+  /** @param {ComposerMount} mount @returns {string[]} the harvest, a prose block as its text, a quote as its quote */
+  const said = (mount) => mount.harvest().map((e) => e.kind === 'prose' ? e.attrs.content : '> ' + e.attrs.cache.quote)
+
+  it.each([
+    ['after the block the caret is in', 'blk-0', ['one', '> q', 'two']],
+    ['after the last block when the caret is in it', 'blk-1', ['one', 'two', '> q']],
+    ['last when the caret is in no block of the draft', null, ['one', 'two', '> q']],
+    ['last when the caret names a block the draft does not hold', 'gone', ['one', 'two', '> q']],
+  ])('goes in %s', (_name, caret, harvested) => {
+    const mount = drafted(caret, 'one', 'two')
+    mount.insert(quote('q'))
+    expect(said(mount)).toEqual(harvested)
+    mount.destroy()
+  })
+
+  // An empty paragraph is where writing goes on, so a quote goes in ABOVE it: no
+  // empty line is left over the quote, in an empty draft above all.
+  it.each([
+    ['an empty draft\'s one paragraph', 'blk-0', [''], ['> q', '']],
+    ['an empty paragraph under text', 'blk-1', ['one', ''], ['one', '> q', '']],
+    ['an empty paragraph between text', 'blk-1', ['one', '  ', 'two'], ['one', '> q', '  ', 'two']],
+  ])('goes in before the caret\'s block when it is %s', (_name, caret, contents, held) => {
+    const mount = drafted(caret, ...contents)
+    mount.insert(quote('q'))
+    const provider = /** @type {InMemoryContainerProvider} */ (mount.provider)
+    const blocks = provider.getOrder().map((id) => /** @type {any} */ (provider.getBlock(id)))
+    expect(blocks.map((b) => b.kind === 'prose' ? b.attrs.content : '> ' + b.attrs.cache.quote)).toEqual(held)
+    mount.destroy()
+  })
+
+  it('travels in the harvest as the reference it is, its attrs whole and named by the draft', () => {
+    const mount = drafted(null, 'why?')
+    mount.insert(quote('the scanner trims'))
+    const [, element] = mount.harvest()
+    const { id, ...attrs } = element.attrs
+    expect(element.kind).toBe('reference')
+    expect(attrs).toEqual(quote('the scanner trims').attrs)
+    expect(Ident.valid(id)).toBe(true)
+    mount.destroy()
+  })
+
+  it('two quotes are two blocks, each where it was put; deleting one leaves the other', () => {
+    const mount = drafted('blk-0', 'one')
+    mount.insert(quote('first'))
+    mount.insert(quote('second'))
+    expect(said(mount)).toEqual(['one', '> second', '> first'])
+    const provider = /** @type {InMemoryContainerProvider} */ (mount.provider)
+    const [, second] = provider.getOrder()
+    provider.requestRemoveBlock(second)
+    expect(said(mount)).toEqual(['one', '> first'])
+    mount.destroy()
+  })
+
+  it('is a change of the draft: its listeners hear it', () => {
+    const mount = drafted(null)
+    const changed = vi.fn()
+    mount.onChanged(changed)
+    mount.insert(quote('q'))
+    expect(changed).toHaveBeenCalledTimes(1)
+    mount.destroy()
+  })
+
+  it('a draft holding only a quote is not empty: Up is the caret\'s in it', () => {
+    window.isMod = (e) => !!(e.ctrlKey || e.metaKey)
+    const mount = drafted(null)
+    mount.recallFrom(() => [[{ kind: 'prose', attrs: { content: 'asked' } }]])
+    mount.insert(quote('q'))
+    expect(/** @type {ComposerEditor} */ (mount.editor).claimKey(A_KEY('ArrowUp'))).toBe(false)
+    mount.destroy()
+  })
+})
+
 describe('ComposerMount — the draft lifetime', () => {
   it('headless (no fixture) opens nothing and harvests nothing', () => {
     const mount = new ComposerMount(null)
@@ -171,6 +267,211 @@ describe('ComposerMount — the draft lifetime', () => {
     expect(mount.read()).toBe('')
     expect(mount.isEmpty()).toBe(true)
     expect(mount.hasFocus()).toBe(false)
+  })
+})
+
+// ── A DRAFT BELONGS TO A PLACE, AND UP RECALLS WHAT ITS SOURCE SAYS WAS ASKED ─
+//
+// Driven through the draft container and the lens's own `claimKey`, which puts
+// a bare Up or Down to the mount: the surface is stubbed, so what is written is
+// written into the container, as the lens's observer would write it. What is
+// recalled is whatever the source the host named answers at the key; the mount
+// keeps nothing of what was sent.
+describe('ComposerMount — drafts by place, and Up recalling what was asked', () => {
+  beforeEach(() => {
+    window.isMod = (e) => !!(e.ctrlKey || e.metaKey)
+    vi.spyOn(ComposerEditor.prototype, 'presentSurface').mockImplementation(() => /** @type {any} */ (null))
+  })
+  afterEach(() => { vi.restoreAllMocks() })
+
+  /** @param {string} content */
+  const asked = (content) => Object.freeze([Object.freeze({ kind: 'prose', attrs: Object.freeze({ id: Ident.mint(), content }) })])
+
+  /** A mount with its draft open, recalling from a source that answers
+   *  `questions` as they stand at each key.
+   *  @param {...string} questions @returns {{mount: ComposerMount, questions: any[], source: any}} */
+  function opened(...questions) {
+    const mount = new ComposerMount(document.createElement('div'))
+    const list = questions.map(asked)
+    const source = vi.fn(() => list)
+    mount.recallFrom(source)
+    mount.open()
+    return { mount, questions: list, source }
+  }
+
+  /** @param {ComposerMount} mount @param {string} content */
+  const write = (mount, content) => /** @type {InMemoryContainerProvider} */ (mount.provider).requestAddBlock('prose', { content })
+
+  /** @param {ComposerMount} mount @returns {string} the draft, one entry per block */
+  const draft = (mount) => ComposerMount.elementsOf(/** @type {InMemoryContainerProvider} */ (mount.provider))
+    .map((e) => e.attrs.content || e.kind).join('|')
+
+  /** @param {ComposerMount} mount @param {string} key @param {object} [mods] @returns {boolean} claimed */
+  const press = (mount, key, mods) => /** @type {ComposerEditor} */ (mount.editor).claimKey(A_KEY(key, mods))
+
+  it('each place keeps its own draft, and the place returned to presents it again', () => {
+    const { mount } = opened()
+    write(mount, 'about the note')
+    mount.setPlace('chat-a')
+    mount.open()
+    expect(draft(mount)).toBe('')
+    write(mount, 'to chat a')
+    mount.setPlace('chat-b')
+    mount.open()
+    write(mount, 'to chat b')
+    mount.setPlace('')
+    expect(draft(mount)).toBe('about the note')
+    mount.setPlace('chat-a')
+    expect(draft(mount)).toBe('to chat a')
+    mount.forget('chat-a')
+    mount.open()
+    expect(draft(mount)).toBe('')
+    mount.setPlace('chat-b')
+    expect(draft(mount)).toBe('to chat b')
+    mount.destroy()
+  })
+
+  it.each([
+    ['Up recalls the last asked', ['ArrowUp'], [true], 'two'],
+    ['Up again goes further back', ['ArrowUp', 'ArrowUp'], [true, true], 'one'],
+    ['Up on the oldest is claimed and stays there', ['ArrowUp', 'ArrowUp', 'ArrowUp'], [true, true, true], 'one'],
+    ['Down comes forward', ['ArrowUp', 'ArrowUp', 'ArrowDown'], [true, true, true], 'two'],
+    ['Down past the newest returns to an empty draft', ['ArrowUp', 'ArrowDown'], [true, true], ''],
+    ['Down in an empty draft is not claimed', ['ArrowUp', 'ArrowDown', 'ArrowDown'], [true, true, false], ''],
+    ['Down with nothing recalled is not claimed', ['ArrowDown'], [false], ''],
+  ])('in an empty draft: %s', (_name, keys, claimed, after) => {
+    const { mount } = opened('one', 'two')
+    expect(keys.map((key) => press(mount, key))).toEqual(claimed)
+    expect(draft(mount)).toBe(after)
+    mount.destroy()
+  })
+
+  it.each([
+    ['a mount told of no source', () => new ComposerMount(document.createElement('div'))],
+    ['a source with nothing asked', () => opened().mount],
+  ])('Up recalls nothing and is not claimed with %s', (_name, make) => {
+    const mount = make()
+    mount.open()
+    expect([press(mount, 'ArrowUp'), draft(mount)]).toEqual([false, ''])
+    mount.destroy()
+  })
+
+  it.each([
+    ['a draft with words in it', (/** @type {ComposerMount} */ m) => write(m, 'half a question')],
+    ['a draft holding only an attachment', (/** @type {ComposerMount} */ m) => {
+      const { kind, attrs } = attachmentBlock('sieve://other', 'Auth Design')
+      const provider = /** @type {InMemoryContainerProvider} */ (m.provider)
+      provider.requestAddBlock(kind, attrs)
+    }],
+  ])('Up and Down are the caret\'s in %s: never claimed, the draft untouched, the source not read', (_name, fill) => {
+    const { mount, source } = opened('one')
+    fill(mount)
+    const before = draft(mount)
+    expect([press(mount, 'ArrowUp'), press(mount, 'ArrowDown')]).toEqual([false, false])
+    expect(draft(mount)).toBe(before)
+    expect(source).not.toHaveBeenCalled()
+    mount.destroy()
+  })
+
+  it.each([['Shift', { shiftKey: true }], ['Alt', { altKey: true }], ['Ctrl', { ctrlKey: true }], ['Cmd', { metaKey: true }]])(
+    '%s+Up recalls nothing', (_name, mods) => {
+      const { mount } = opened('one')
+      expect(press(mount, 'ArrowUp', mods)).toBe(false)
+      expect(draft(mount)).toBe('')
+      mount.destroy()
+    })
+
+  it('the source is read at the key: a question asked since the last Up is the first recalled', () => {
+    const { mount, questions } = opened('one')
+    expect([press(mount, 'ArrowUp'), draft(mount)]).toEqual([true, 'one'])
+    press(mount, 'ArrowDown')
+    questions.push(asked('just now'))
+    expect([press(mount, 'ArrowUp'), draft(mount)]).toEqual([true, 'just now'])
+    expect([press(mount, 'ArrowUp'), draft(mount)]).toEqual([true, 'one'])
+    mount.destroy()
+  })
+
+  it('a recalled question that is edited is the draft: Up is the caret\'s again', () => {
+    const { mount } = opened('one', 'two')
+    press(mount, 'ArrowUp')
+    write(mount, 'and more')
+    expect(press(mount, 'ArrowUp')).toBe(false)
+    expect(draft(mount)).toBe('two|and more')
+    mount.destroy()
+  })
+
+  it('a recalled question is a new draft: its blocks are named afresh, never with the ids they were asked with', () => {
+    const { mount, questions } = opened('one')
+    press(mount, 'ArrowUp')
+    const provider = /** @type {InMemoryContainerProvider} */ (mount.provider)
+    const [id] = provider.getOrder()
+    expect(provider.getBlock(id)?.attrs.id).toBe(id)
+    expect(id).not.toBe(questions[0][0].attrs.id)
+    press(mount, 'ArrowDown')
+    press(mount, 'ArrowUp')
+    expect(/** @type {InMemoryContainerProvider} */ (mount.provider).getOrder()[0]).not.toBe(id)
+    mount.destroy()
+  })
+
+  it('sending retires the draft and records nothing: Up recalls only what the source answers', () => {
+    const { mount } = opened()
+    write(mount, 'sent')
+    mount.reset()
+    expect([press(mount, 'ArrowUp'), draft(mount)]).toEqual([false, ''])
+    mount.destroy()
+  })
+
+  it('a recall is a change of the draft: its listeners hear it', () => {
+    const { mount } = opened('one')
+    const changed = vi.fn()
+    mount.onChanged(changed)
+    press(mount, 'ArrowUp')
+    expect(changed).toHaveBeenCalledTimes(1)
+    mount.destroy()
+  })
+})
+
+// ── A RECALLED QUESTION COMES BACK WHOLE ─────────────────────────────────────
+//
+// `blocksOf` is the walk's inverse: what it writes into a draft is what the
+// harvest reads back out of it, each element as it was asked, a quote and an
+// attachment included; a kind a draft cannot hold is left out.
+describe('ComposerMount.blocksOf — a question written back as a draft', () => {
+  const CHAT = '0198c1a0-0000-7000-8000-0000000000c1'
+  const quote = /** @type {any} */ (QuestionList.quotation(CHAT, '0198c1a0-0000-7000-8000-0000000000e1', 'the scanner trims'))
+  const attachment = /** @type {any} */ (QuestionList.attachment('sieve://0198c1a0-0002-7000-8000-0000000000f1', 'Auth Design'))
+
+  /** @param {any[]} elements @returns {any[]} the harvest of a draft holding them, ids aside */
+  const roundTrip = (elements) => ComposerMount.elementsOf(new InMemoryContainerProvider({
+    blocks: ComposerMount.blocksOf(elements).map((block, i) => ({ id: 'blk-' + i, kind: block.kind, attrs: Object.assign({}, block.attrs, { id: 'blk-' + i }) })),
+  })).map(({ kind, attrs: { id: _id, ...attrs } }) => ({ kind, attrs }))
+
+  it.each([
+    ['prose', [{ kind: 'prose', attrs: { id: 'x', content: 'why?' } }], [{ kind: 'prose', attrs: { content: 'why?' } }]],
+    ['code, as the fence it is harvested from', [{ kind: 'code', attrs: { source: 'panic()', language: 'go' } }], [{ kind: 'code', attrs: { source: 'panic()', language: 'go' } }]],
+    ['a quote and an attachment, in place', [quote, { kind: 'prose', attrs: { content: 'why @Auth Design?' } }, attachment],
+      [quote, { kind: 'prose', attrs: { content: 'why @Auth Design?' } }, attachment]],
+    ['a kind a draft cannot hold, left out', [{ kind: 'prose', attrs: { content: 'see' } }, { kind: 'diagram', attrs: { source: 'a -> b' } }],
+      [{ kind: 'prose', attrs: { content: 'see' } }]],
+  ])('%s', (_name, elements, harvested) => {
+    expect(roundTrip(elements)).toEqual(harvested)
+  })
+
+  it('a recalled question with a quote and an attachment is presented with both', () => {
+    window.isMod = (e) => !!(e.ctrlKey || e.metaKey)
+    const present = vi.spyOn(ComposerEditor.prototype, 'presentSurface').mockImplementation(() => /** @type {any} */ (null))
+    try {
+      const mount = new ComposerMount(document.createElement('div'))
+      mount.recallFrom(() => [QuestionList.written([quote, { kind: 'prose', attrs: { content: 'why @Auth Design?' } }, attachment])])
+      mount.open()
+      expect(/** @type {ComposerEditor} */ (mount.editor).claimKey(A_KEY('ArrowUp'))).toBe(true)
+      const provider = /** @type {InMemoryContainerProvider} */ (mount.provider)
+      const blocks = provider.getOrder().map((id) => /** @type {any} */ (provider.getBlock(id)))
+      expect(blocks.map((b) => b.kind)).toEqual(['reference', 'prose', 'reference'])
+      expect(blocks[0].attrs.displayAs).toBe('quote')
+      expect(QuestionList.attachmentOf(blocks[2])).toEqual({ uri: attachment.attrs.uri, title: 'Auth Design' })
+      mount.destroy()
+    } finally { present.mockRestore() }
   })
 })
 
@@ -244,9 +545,9 @@ describe('the composer mount claims Mod+Enter, and only Mod+Enter', () => {
     expect(finished).not.toHaveBeenCalled()
   })
 
-  it('claims NOTHING else — every other key falls through to the surface', () => {
+  it('claims NOTHING else without a host that recalls — every other key falls through to the surface', () => {
     const editor = composer()
-    for (const key of ['Escape', 'Tab', 'a', 'Backspace', 'ArrowDown', 'Home']) {
+    for (const key of ['Escape', 'Tab', 'a', 'Backspace', 'ArrowUp', 'ArrowDown', 'Home']) {
       expect(editor.claimKey(A_KEY(key))).toBe(false)
     }
   })

@@ -249,7 +249,7 @@ func TestDeleteAsset_refusesHeldRemovesUnused(t *testing.T) {
 	doc, _ := ds.New()
 	uuid := doc.UUID()
 	for _, key := range []string{"held.png", "page-suzuka.html", "café.png", "placed.png"} {
-		if _, err := assets.Save(domain.WorkingCopy, uuid, key, []byte{0x89, 0x50, 0x4E, 0x47}); err != nil {
+		if _, err := assets.Save(uuid, key, []byte{0x89, 0x50, 0x4E, 0x47}); err != nil {
 			t.Fatalf("seed %s: %v", key, err)
 		}
 	}

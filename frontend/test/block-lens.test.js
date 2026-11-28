@@ -52,7 +52,7 @@ describe('BlockLens', () => {
 
   it('is read-only by construction: no capability, and no verb reaches the provider', async () => {
     const { lens } = await presented('code', { source: 'x := 1' })
-    expect(lens.getCapabilities()).toEqual({ markdown: false, mentions: false, commands: false, blocks: false })
+    expect(lens.getCapabilities()).toEqual({ markdown: false, mentions: false, commands: false, blocks: false, ask: false })
     expect(lens.canEditBlocks).toBe(false)
     const provider = /** @type {any} */ (lens.provider)
     for (const verb of ['requestAddBlock', 'requestSetBlock', 'requestRemoveBlock', 'requestReplaceText', 'requestPersist', 'setContents', 'flushContents', 'paste']) {

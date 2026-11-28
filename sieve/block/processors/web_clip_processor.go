@@ -139,7 +139,7 @@ func (p *WebClipBlockProcessor) Transform(entries []block.ContentEntry, uuid, bl
 
 func (p *WebClipBlockProcessor) OnChange(_ *domain.SieveBlock) {}
 
-func (p *WebClipBlockProcessor) BuildContext(blk domain.SieveBlock, doc block.DocView, seen map[string]bool) block.AIContext {
+func (p *WebClipBlockProcessor) BuildContext(blk domain.SieveBlock, doc block.ContainerView, seen map[string]bool) block.AIContext {
 	source, _ := blk.Attrs["source"].(string)
 	title, _ := blk.Attrs["title"].(string)
 	content, _ := blk.Attrs["content"].(string)
@@ -216,7 +216,7 @@ func (p *WebClipBlockProcessor) DescribeJob(jctx block.JobContext) *block.Proces
 			return webClipResult{
 				title:   title,
 				content: content,
-				page:    p.svc.Documents.PageAssetAddress(uuid, source),
+				page:    p.svc.Assets.PageAssetAddress(uuid, source),
 			}, nil
 		},
 		Apply: func(result any, b *domain.SieveBlock) {

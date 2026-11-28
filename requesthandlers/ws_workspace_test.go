@@ -1,6 +1,7 @@
 package requesthandlers
 
 import (
+	"encoding/json"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -24,6 +25,32 @@ func dialWorkspaceWS(t *testing.T, srv *httptest.Server) *websocket.Conn {
 		t.Fatalf("first frame on a workspace socket = %v, want the jobs snapshot", first["type"])
 	}
 	return c
+}
+
+// readInvalidations reads the workspace socket until an invalidate frame has
+// arrived for every one of topics, in whatever order, skipping every other frame,
+// and fails after two seconds. It returns the topics heard, in order.
+func readInvalidations(t *testing.T, c *websocket.Conn, topics ...protocol.Topic) []string {
+	t.Helper()
+	want := map[string]bool{}
+	for _, topic := range topics {
+		want[string(topic)] = true
+	}
+	var heard []string
+	deadline := time.Now().Add(2 * time.Second)
+	for len(want) > 0 {
+		_ = c.SetReadDeadline(deadline)
+		_, raw, err := c.ReadMessage()
+		if err != nil {
+			t.Fatalf("waiting for invalidations of %v, heard %v: %v", topics, heard, err)
+		}
+		var frame struct{ Type, Topic string }
+		if json.Unmarshal(raw, &frame) == nil && frame.Type == protocol.TypeInvalidate {
+			heard = append(heard, frame.Topic)
+			delete(want, frame.Topic)
+		}
+	}
+	return heard
 }
 
 // waitFor polls until settled, failing with why after two seconds. An

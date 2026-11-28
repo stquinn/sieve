@@ -43,11 +43,18 @@ export class QuestionListView {
   /** @type {Array<BlockRecordView>} the record views this draw owns */ #composed = []
   /** @type {MutationObserver|null} keeps late content anonymous */ #watcher = null
   /** @type {string} the container whose assets an element's refs name */ #container
+  /** @type {{open?: (uri: string, seek?: string) => void}} what each element's record view is handed */ #intents
 
-  /** @param {string} [container] the uuid of the document the question is asked
-   *  in — what an element's asset reference is resolved against */
-  constructor(container) {
+  /**
+   * @param {string} [container] the uuid of the document the question is asked
+   *   in — what an element's asset reference is resolved against
+   * @param {{open?: (uri: string, seek?: string) => void}} [intents] `open` is
+   *   told the address an element asks to open and the text it seeks there, if
+   *   any (BlockRecordView)
+   */
+  constructor(container, intents = {}) {
     this.#container = String(container || '')
+    this.#intents = Object.freeze({ open: intents.open })
   }
 
   /**
@@ -107,7 +114,7 @@ export class QuestionListView {
    * @returns {HTMLElement}
    */
   #content(element) {
-    const view = new BlockRecordView(this.#container)
+    const view = new BlockRecordView(this.#container, this.#intents)
     const dom = view.draw(element.kind, element.attrs || {})
     if (!dom) return QuestionListView.#unknown(element)
     this.#composed.push(view)

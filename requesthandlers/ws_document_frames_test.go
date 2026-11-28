@@ -3,13 +3,19 @@ package requesthandlers
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/gorilla/websocket"
 
 	"sieve/sieve"
+	"sieve/sieve/ai"
 	"sieve/sieve/block"
 	"sieve/sieve/block/processors"
 	"sieve/sieve/domain"
@@ -654,6 +660,186 @@ func TestWS_BlockContainer_ASaveReachesTheOpenSocket(t *testing.T) {
 	attrs, _ := frame["attrs"].(map[string]interface{})
 	if frame["id"] != c.UUID() || attrs["source"] != "y := 2" {
 		t.Errorf("attrs frame = %v, want the saved source on the container's block", frame)
+	}
+	closeAndSettle(conn)
+}
+
+// chatRunner is a CLI runner standing in for a model: each run is answer, whose result is the
+// run's final message, and a run is counted when it starts.
+type chatRunner struct {
+	runs   atomic.Int32
+	answer func(run int) (string, error)
+}
+
+func (r *chatRunner) Run(ai.Run, ai.ResponseNote) (string, error) {
+	return r.answer(int(r.runs.Add(1)))
+}
+
+// newChatOnWire creates a chat in the harness's store and wires the ai-block kind to a runner that
+// answers with answer, in the smart tier; the runner execs no CLI. The registry is restored to
+// prose alone when the test ends.
+func newChatOnWire(t *testing.T, sp *sieve.ServiceProvider, answer func(run int) (string, error)) (string, *chatRunner) {
+	t.Helper()
+	stub := filepath.Join(t.TempDir(), "stub-ai-cli")
+	if err := os.WriteFile(stub, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("write stub CLI: %v", err)
+	}
+	settings := domain.DefaultSettings()
+	settings.CLI, settings.CLIPath = "claude", stub
+	if err := sp.State.SaveSettings(settings); err != nil {
+		t.Fatalf("SaveSettings: %v", err)
+	}
+	prompts, err := ai.NewPromptService(sp.Store)
+	if err != nil {
+		t.Fatalf("NewPromptService: %v", err)
+	}
+	runner := &chatRunner{answer: answer}
+	aiSvc := ai.NewAIService(sp.State, prompts, sp.Documents, nil, "")
+	aiSvc.SetRunner(runner)
+	block.RegisterProcessor(processors.NewAIBlockProcessor(block.BlockServices{AI: aiSvc, State: sp.State}))
+	t.Cleanup(func() {
+		block.ResetRegistry()
+		block.RegisterProcessor(&processors.ProseProcessor{})
+	})
+	c, err := sp.Chats.Create("")
+	if err != nil {
+		t.Fatalf("Create chat: %v", err)
+	}
+	return c.UUID(), runner
+}
+
+const twoBlockQuestion = `[{"id":"q-1","kind":"prose","attrs":{"content":"What is a chat?"}},{"kind":"prose","attrs":{"content":"And a turn?"}}]`
+
+// chatExchange is the exchange the frame carries as its attrs hold it: the contents of its question
+// and answer blocks, and its status.
+func chatExchange(t *testing.T, attrs map[string]interface{}) (question, answer []string, status interface{}) {
+	t.Helper()
+	b := domain.SieveBlock{Kind: block.KindAIBlock, Attrs: attrs}
+	for _, el := range b.Elements(block.QuestionAttr) {
+		question = append(question, el.Content())
+	}
+	for _, el := range b.Elements(block.AnswerAttr) {
+		answer = append(answer, el.Content())
+	}
+	return question, answer, attrs["status"]
+}
+
+// A chat's channel loads its exchanges as the blocks it holds, kind chat. An exchange asked with a
+// two-block question arrives as a created block holding both blocks verbatim, its answer arrives as
+// an update of that block, and a load after it serves the answered exchange.
+func TestWS_Chat_AnExchangeIsAskedAnsweredAndLoaded(t *testing.T) {
+	srv, sp, _, _ := newWsTestServer(t)
+	uuid, _ := newChatOnWire(t, sp, func(int) (string, error) { return "A chat is a list of exchanges.", nil })
+
+	conn := dialWS(t, srv, uuid)
+	send(t, conn, `{"type":"load","opId":"op-load"}`)
+	empty := readUntil(t, conn, protocol.TypeLoadContent, 2*time.Second)
+	if blocks, _ := empty["blocks"].([]interface{}); empty["kind"] != domain.ChatKind || empty["uuid"] != uuid || len(blocks) != 0 {
+		t.Fatalf("load of a new chat = %v, want kind chat, no blocks", empty)
+	}
+
+	send(t, conn, `{"type":"chat-append-exchange","question":`+twoBlockQuestion+`}`)
+	created := readUntil(t, conn, protocol.TypeInsertBlock, 2*time.Second)
+	id, _ := created["id"].(string)
+	attrs, _ := created["attrs"].(map[string]interface{})
+	question, _, status := chatExchange(t, attrs)
+	if created["kind"] != block.KindAIBlock || id == "" || created["index"] != float64(0) ||
+		fmt.Sprint(question) != fmt.Sprint([]string{"What is a chat?", "And a turn?"}) || status == block.BlockStatusComplete {
+		t.Fatalf("created block = %v, want a new exchange at index 0 holding the two question blocks", created)
+	}
+	if first := (domain.SieveBlock{Attrs: attrs}).Elements(block.QuestionAttr)[0]; first.ID != "q-1" {
+		t.Errorf("the first question block is %q, want the id the client gave it", first.ID)
+	}
+	var answered map[string]interface{}
+	for answered == nil {
+		update := readUntil(t, conn, protocol.TypeBlockAttrsUpdated, 5*time.Second)
+		if update["id"] != id {
+			t.Fatalf("update names %v, want the exchange %q", update["id"], id)
+		}
+		if attrs, _ := update["attrs"].(map[string]interface{}); attrs["status"] == block.BlockStatusComplete {
+			answered = attrs
+		}
+	}
+	if _, answer, _ := chatExchange(t, answered); fmt.Sprint(answer) != fmt.Sprint([]string{"A chat is a list of exchanges."}) {
+		t.Errorf("answer = %v, want the model's message", answer)
+	}
+
+	send(t, conn, `{"type":"load","opId":"op-reload"}`)
+	loaded := readUntil(t, conn, protocol.TypeLoadContent, 2*time.Second)
+	blocks, _ := loaded["blocks"].([]interface{})
+	if first, _ := blocks[0].(map[string]interface{}); loaded["kind"] != domain.ChatKind || len(blocks) != 1 || first["id"] != id {
+		t.Errorf("load = %v, want the one exchange", loaded)
+	}
+	closeAndSettle(conn)
+}
+
+// What a chat's channel refuses is refused with an answer: a question with no block, an unreadable
+// one, a block op, which a chat does not take, and a retry of an exchange that has an answer.
+func TestWS_Chat_RefusesWhatItDoesNotTake(t *testing.T) {
+	srv, sp, _, _ := newWsTestServer(t)
+	uuid, runner := newChatOnWire(t, sp, func(int) (string, error) { return "An answer.", nil })
+
+	conn := dialWS(t, srv, uuid)
+	send(t, conn, `{"type":"chat-append-exchange","question":[{"kind":"prose","attrs":{"content":"Hello?"}}]}`)
+	id, _ := readUntil(t, conn, protocol.TypeInsertBlock, 2*time.Second)["id"].(string)
+	for status := ""; status != block.BlockStatusComplete; {
+		attrs, _ := readUntil(t, conn, protocol.TypeBlockAttrsUpdated, 5*time.Second)["attrs"].(map[string]interface{})
+		status, _ = attrs["status"].(string)
+	}
+
+	for _, tc := range []struct{ name, frame, answer, field, says string }{
+		{"a question with no block", `{"type":"chat-append-exchange","question":[]}`, protocol.TypeError, "message", "holds at least one block"},
+		{"a question that is not a list", `{"type":"chat-append-exchange","question":"Hello?"}`, protocol.TypeError, "message", "unreadable"},
+		{"a block op", `{"type":"block-op","opId":"o1","op":{"type":"create-block","kind":"prose","attrs":{"content":"x"}}}`, protocol.TypeBlockOpAck, "error", "is a chat"},
+		{"a retry of an answered exchange", `{"type":"retry-block-job","id":"` + id + `"}`, protocol.TypeError, "message", "has an answer"},
+		{"a retry of a block the chat lacks", `{"type":"retry-block-job","id":"nothing"}`, protocol.TypeError, "message", "no such block"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			send(t, conn, tc.frame)
+			if msg, _ := readUntil(t, conn, tc.answer, 2*time.Second)[tc.field].(string); !strings.Contains(msg, tc.says) {
+				t.Errorf("%s = %q, want it to say %q", tc.answer, msg, tc.says)
+			}
+		})
+	}
+	closeAndSettle(conn)
+
+	stored, err := sp.Chats.Load(uuid)
+	if err != nil || len(stored.Exchanges()) != 1 || runner.runs.Load() != 1 {
+		t.Errorf("a refused frame changed the chat: %+v (%d runs), %v", stored.Exchanges(), runner.runs.Load(), err)
+	}
+}
+
+// A retry-block-job of an exchange whose run failed runs it again, in a chat as in a note: the
+// exchange goes back to pending and its second answer arrives as an update.
+func TestWS_Chat_ARetryRerunsAFailedExchange(t *testing.T) {
+	srv, sp, _, _ := newWsTestServer(t)
+	uuid, runner := newChatOnWire(t, sp, func(run int) (string, error) {
+		if run == 1 {
+			return "", errors.New("cli exited with status 1")
+		}
+		return "Second time lucky.", nil
+	})
+
+	conn := dialWS(t, srv, uuid)
+	send(t, conn, `{"type":"chat-append-exchange","question":[{"kind":"prose","attrs":{"content":"Will this fail?"}}]}`)
+	id, _ := readUntil(t, conn, protocol.TypeInsertBlock, 2*time.Second)["id"].(string)
+	for status := ""; status != block.BlockStatusError; {
+		attrs, _ := readUntil(t, conn, protocol.TypeBlockAttrsUpdated, 5*time.Second)["attrs"].(map[string]interface{})
+		status, _ = attrs["status"].(string)
+	}
+
+	send(t, conn, `{"type":"retry-block-job","id":"`+id+`"}`)
+	for {
+		attrs, _ := readUntil(t, conn, protocol.TypeBlockAttrsUpdated, 5*time.Second)["attrs"].(map[string]interface{})
+		if attrs["status"] == block.BlockStatusComplete {
+			if _, answer, _ := chatExchange(t, attrs); fmt.Sprint(answer) != fmt.Sprint([]string{"Second time lucky."}) {
+				t.Errorf("answer = %v, want the second run's", answer)
+			}
+			break
+		}
+	}
+	if runs := runner.runs.Load(); runs != 2 {
+		t.Errorf("the model ran %d times, want 2", runs)
 	}
 	closeAndSettle(conn)
 }

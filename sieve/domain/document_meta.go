@@ -6,6 +6,9 @@ import (
 	"time"
 )
 
+// MetaAiTimeLayout is the layout of AiLastEvaluated, the time the AI last did work on a thing.
+const MetaAiTimeLayout = "2006-01-02T15:04:05"
+
 // DocumentMeta is the typed contract over the map[string]string that travels
 // with every MetaStorable. Keys match the YAML frontmatter field names exactly.
 // Always access fields through this interface in business code — never read or
@@ -30,6 +33,9 @@ type DocumentMeta interface {
 
 	AiLastEvaluated() *string
 	SetAiLastEvaluated(v *string)
+	// RecordAiRun records that the AI did work on the thing at at, with the CLI named cli: its
+	// AiLastEvaluated in MetaAiTimeLayout and its CLI, which an empty cli leaves as it was.
+	RecordAiRun(cli string, at time.Time)
 
 	AiFolderSuggestion() *string
 	SetAiFolderSuggestion(v *string)
@@ -152,6 +158,14 @@ func (d *documentMeta) SetAiJustification(v *string) { d.set("ai_justification",
 
 func (d *documentMeta) DensitySignals() []string     { return metaList(d.m, "density_signals") }
 func (d *documentMeta) SetDensitySignals(v []string) { d.set("density_signals", listVal(v)) }
+
+func (d *documentMeta) RecordAiRun(cli string, at time.Time) {
+	stamp := at.Format(MetaAiTimeLayout)
+	d.SetAiLastEvaluated(&stamp)
+	if cli != "" {
+		d.SetCLI(&cli)
+	}
+}
 
 func (d *documentMeta) CLI() *string     { return metaNullableStr(d.m, "cli") }
 func (d *documentMeta) SetCLI(v *string) { d.set("cli", nullableStrVal(v)) }

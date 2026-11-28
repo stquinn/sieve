@@ -142,8 +142,8 @@ func TestDigitalNoteKind_AttrsFaceAndSourceThroughAContainer(t *testing.T) {
 					t.Errorf("face %s = %v, want %q", k, face[k], v)
 				}
 			}
-			if _, named := face[metaNamedBy]; named != (tc.wantFace[metaNamedBy] != "") {
-				t.Errorf("face note_named_by = %v, want %q", face[metaNamedBy], tc.wantFace[metaNamedBy])
+			if _, named := face[domain.MetaKeyNamedBy]; named != (tc.wantFace[domain.MetaKeyNamedBy] != "") {
+				t.Errorf("face note_named_by = %v, want %q", face[domain.MetaKeyNamedBy], tc.wantFace[domain.MetaKeyNamedBy])
 			}
 			before := map[string]string{}
 			for k, v := range face {

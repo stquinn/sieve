@@ -54,7 +54,11 @@ type SetPresentingFrame struct {
 	Presenting bool   `json:"presenting" doc:"true while the document is presented"`
 }
 
-// RetryBlockJobFrame re-runs the job of one block that failed or was interrupted.
+// RetryBlockJobFrame re-runs the job of one block that failed or was interrupted: a block of a note,
+// an exchange of a chat, or a block nested in an answer. It is not answered; the block arrives
+// again as a block-attrs-updated, PENDING. It is refused with an error frame when the container
+// holds no such block or refuses it: a chat refuses an exchange that has an answer or is being
+// answered.
 type RetryBlockJobFrame struct {
 	Type string `json:"type"`
 	ID   string `json:"id" doc:"the block whose job re-runs"`
@@ -299,9 +303,11 @@ type DocumentContent struct {
 	// open arrive as a container-named frame.
 	Name string `json:"name,omitempty" doc:"what the container is called; absent when it has no name"`
 	// Scroll is a per-user VIEW property, not document metadata, so it rides the
-	// session's tab list. Zero means park at top — the same answer for a tab never
-	// scrolled and a tab never opened, which need no distinction.
-	Scroll int `json:"scroll" doc:"the tab's saved scroll offset; 0 parks at the top"`
+	// session's tab list. It is in the measure of the surface that reported it,
+	// which is the one that reads it back; zero is where that surface opens a
+	// container it has never shown — the same answer for a tab never scrolled and
+	// a tab never opened, which need no distinction.
+	Scroll int `json:"scroll" doc:"the tab's saved scroll position, in its surface's own pixels; 0 is where the surface opens a container never seen (a document's top, a chat's newest message)"`
 	// Version is the BASELINE for the container-saved fact: without it a client
 	// that waits for its own save to land has nothing to compare the first fact
 	// against, and would settle on a debounce write that predates the ask. Same

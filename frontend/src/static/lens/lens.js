@@ -84,9 +84,14 @@ export class Lens {
    * the container named as the leaf to reveal — and may be asked before or after
    * the lens is presented. A lens that has no such leaf, or cannot bring one into
    * view, does nothing; this base does nothing.
+   *
+   * `seek`, when given, is the text the opener is looking for at the leaf, as
+   * the opener handed it and uninterpreted by the host. A lens may use it to
+   * choose what at the leaf to bring into view, and may ignore it.
    * @param {string} leaf
+   * @param {string} [seek]
    */
-  reveal(leaf) {}
+  reveal(leaf, seek) {}
 
   /**
    * Registers the host's presence sink, or clears it with null.

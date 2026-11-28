@@ -38,7 +38,7 @@ func foldReference(uri, rel, title string) domain.SieveBlock {
 // block, foldLeafID, that foldTarget names. A target that is not in the document
 // is not named by a question's header.
 func foldDoc() block.DocView {
-	return block.DocView{UUID: foldDocUUID, Blocks: []domain.SieveBlock{
+	return block.DocView{ContainerAddressing: block.ContainerAddressing{UUID: foldDocUUID}, Blocks: []domain.SieveBlock{
 		{ID: foldLeafID, Kind: block.KindProse, Attrs: map[string]interface{}{"content": "leaf"}},
 	}}
 }
@@ -68,7 +68,7 @@ func foldAsk(els ...domain.SieveBlock) domain.SieveBlock {
 // already in is expressible ONLY by declaring the role.
 func TestAIBlockFold_ReferenceRoleDecidesTheSlot(t *testing.T) {
 	p := &AIBlockProcessor{}
-	doc := block.DocView{UUID: foldDocUUID}
+	doc := block.DocView{ContainerAddressing: block.ContainerAddressing{UUID: foldDocUUID}}
 
 	cases := []struct {
 		name string
@@ -145,7 +145,7 @@ func TestAIBlockFold_AForeignTargetRendersInPlace(t *testing.T) {
 		foldReference(foldOtherLeaf, block.RelTarget, "Auth Design"),
 		domain.NewSieveBlock(block.KindProse, "", map[string]interface{}{"content": "what does this say?"}),
 	)
-	content, _, question := p.buildPrompt(&blk, block.DocView{UUID: foldDocUUID})
+	content, _, question := p.buildPrompt(&blk, block.DocView{ContainerAddressing: block.ContainerAddressing{UUID: foldDocUUID}})
 
 	if !strings.Contains(content, "Reference: Auth Design") || !strings.Contains(content, foldOtherLeaf) {
 		t.Errorf("TARGET did not render the foreign target in place:\n%s", content)
@@ -170,7 +170,7 @@ func TestAIBlockFold_AForeignTargetIsNeverFetched(t *testing.T) {
 
 	p := NewAIBlockProcessor(block.BlockServices{})
 	blk := foldAsk(foldReference(foldOther, block.RelTarget, ""))
-	content, _, _ := p.buildPrompt(&blk, block.DocView{UUID: foldDocUUID})
+	content, _, _ := p.buildPrompt(&blk, block.DocView{ContainerAddressing: block.ContainerAddressing{UUID: foldDocUUID}})
 
 	if !strings.Contains(content, foldOther) {
 		t.Fatalf("a faceless foreign target vanished from the TARGET slot:\n%s", content)
@@ -195,7 +195,7 @@ func TestAIBlockFold_BodyRendersEveryKindThroughItsOwnSeam(t *testing.T) {
 		t.Fatalf("body holds %d elements, want 3", len(q.body))
 	}
 	want := "why is this slow?\n\n```go\nfor {}\n```\n\nbe brief"
-	if got := p.questionText(q.body, block.DocView{UUID: foldDocUUID}); got != want {
+	if got := p.questionText(q.body, block.DocView{ContainerAddressing: block.ContainerAddressing{UUID: foldDocUUID}}); got != want {
 		t.Errorf("body text:\n got: %q\nwant: %q", got, want)
 	}
 }
@@ -231,7 +231,7 @@ func TestAIBlockFold_AListlessBlockIsDetached(t *testing.T) {
 	blk := domain.NewSieveBlock("ai-block", "0197b2aa-5555-7888-8999-aaaabbbbcccc", map[string]interface{}{
 		"type": "ASK", "ref": "doc", "question": "legacy text",
 	})
-	if header := p.qaHeader(blk, block.DocView{UUID: foldDocUUID}); header != "QUESTION ABOUT: " {
-		t.Errorf("qaHeader = %q, want the detached header alone", header)
+	if header := p.qaHeader(blk, block.DocView{ContainerAddressing: block.ContainerAddressing{UUID: foldDocUUID}}); header != "" {
+		t.Errorf("qaHeader = %q, want nothing: a question about nothing with no text", header)
 	}
 }

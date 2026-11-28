@@ -20,6 +20,8 @@
 // two sides classify the same list into the same slots, so what the prompt was
 // built from is what the block draws.
 
+import { ReferenceRenderer } from './reference-renderer.js'
+
 /**
  * One element of a question: the kind, and everything that kind owns.
  * @typedef {{ kind: string, attrs: Record<string, any> }} QuestionElement
@@ -150,6 +152,61 @@ export class QuestionList {
     const face = String(title == null ? '' : title).trim()
     if (face) attrs.cache = { title: face }
     return { kind: KIND_REFERENCE, attrs: attrs }
+  }
+
+  /**
+   * A quote of `text` from `leaf` of `container` as the reference element that
+   * carries it: the absolute address of what was quoted, the `target` stamp, drawn
+   * as a quote, the text in its cache. THE SINGLE DEFINITION of the shape. Blank
+   * text, or no container, is not a quote.
+   * @param {any} container the uuid of the container the quoted block is in
+   * @param {any} leaf the quoted block's id; blank quotes the container itself
+   * @param {any} text what was quoted
+   * @returns {QuestionElement|null}
+   */
+  static quotation(container, leaf, text) {
+    const quoted = String(text == null ? '' : text).trim()
+    const own = String(container == null ? '' : container).trim()
+    if (!quoted || !own) return null
+    const id = String(leaf == null ? '' : leaf).trim()
+    const [target] = new QuestionList(own).about(id || WHOLE_DOCUMENT).elements
+    return {
+      kind: KIND_REFERENCE,
+      attrs: Object.assign({}, target.attrs, {
+        displayAs: ReferenceRenderer.DisplayAs.QUOTE,
+        cache: { [ReferenceRenderer.QUOTE_KEY]: quoted },
+      }),
+    }
+  }
+
+  /**
+   * The elements of a question a reader SEES in its body, in authored order: the
+   * body slot, and every reference that declares how it is drawn (`displayAs`),
+   * whichever slot it folds into.
+   * @param {any} question
+   * @param {string} container  the uuid of the document holding the question
+   * @returns {QuestionElement[]}
+   */
+  static drawn(question, container) {
+    const elements = QuestionList.elementsOf(question)
+    const body = new Set(QuestionList.fold(elements, container).body)
+    return elements
+      .filter((el) => body.has(el) || (el.kind === KIND_REFERENCE && !!(el.attrs && el.attrs.displayAs)))
+  }
+
+  /**
+   * The elements of a question that its asker WROTE, in authored order, as
+   * frozen copies: every element but a target reference that is not drawn,
+   * which is what an asked lens adds from the selection it was asked over
+   * (`about`). A quote is a target that is drawn, so it stays, and so does every
+   * attachment. This is the list a composer harvests and puts to `askAi`.
+   * @param {any} question
+   * @returns {ReadonlyArray<Readonly<QuestionElement>>}
+   */
+  static written(question) {
+    return Object.freeze(QuestionList.elementsOf(question)
+      .filter((el) => !(el.kind === KIND_REFERENCE && el.attrs && el.attrs.rel === QuestionRel.TARGET && !el.attrs.displayAs))
+      .map((el) => Object.freeze({ kind: el.kind, attrs: Object.freeze(Object.assign({}, el.attrs)) })))
   }
 
   /**

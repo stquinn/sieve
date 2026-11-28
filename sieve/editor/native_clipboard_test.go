@@ -66,7 +66,7 @@ func (p *fakeImageKind) Transform(entries []block.ContentEntry, _ string, _ stri
 	return map[string]interface{}{"src": entries[0].Content}
 }
 
-func (p *fakeImageKind) BuildContext(_ domain.SieveBlock, _ block.DocView, _ map[string]bool) block.AIContext {
+func (p *fakeImageKind) BuildContext(_ domain.SieveBlock, _ block.ContainerView, _ map[string]bool) block.AIContext {
 	return block.AIContext{}
 }
 func (p *fakeImageKind) MarkdownRepresentation(_ domain.SieveBlock, _ string) string { return "" }

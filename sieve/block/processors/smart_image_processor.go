@@ -499,7 +499,7 @@ func (p *SmartImageProcessor) parseCSSLength(s string) float64 {
 
 func (p *SmartImageProcessor) OnChange(_ *domain.SieveBlock) {}
 
-func (p *SmartImageProcessor) BuildContext(blk domain.SieveBlock, doc block.DocView, seen map[string]bool) block.AIContext {
+func (p *SmartImageProcessor) BuildContext(blk domain.SieveBlock, doc block.ContainerView, seen map[string]bool) block.AIContext {
 	src, _ := blk.Attrs["src"].(string)
 	alt, _ := blk.Attrs["alt"].(string)
 	summary, _ := blk.Attrs["summary"].(string)

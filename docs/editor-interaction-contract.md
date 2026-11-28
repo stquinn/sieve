@@ -233,13 +233,40 @@ The resulting order for one keystroke, highest first:
 |---|---|---|
 | Note / document (`NoteEditor`) | **nothing** | the matrix above, unchanged |
 | Prompt (`PromptEditor`) | **nothing** | the matrix above, unchanged |
-| Composer (`ComposerEditor`) | `Mod+Enter` → send the message | the matrix above, unchanged |
+| Composer (`ComposerEditor`) | `Mod+Enter` → send the message; bare `ArrowUp` / `ArrowDown` only when its host recalls a question asked (below) | the matrix above, unchanged, `ArrowUp` / `ArrowDown` included whenever the host does not recall |
 | Block container whose kind has no lens (`BlockLens`) | **nothing** | none of the matrix: there is no editing surface. The block is drawn read-only by its kind's renderer, which keeps its read affordances (selection, copy, pan, filters) and drops every edit |
 | Digital Note (`DigitalNoteLens`) | `Mod+Enter` → switch between `page` and `transcript`; bare `PageUp` → previous page, bare `PageDown` → next page, in either mode; on a whiteboard shown as a page also the bare arrows → move the window, `+`/`=` and `-`/`_` → zoom | none of the matrix: there is no editing surface (below) |
 | Live view (`LiveInkLens`) | **nothing** | none of the matrix: there is no editing surface, and no gesture moves the view (below) |
+| Chat (`ChatLens`) | **nothing** | none of the matrix: there is no editing surface (below) |
 
-**The composer is EDITOR-FIRST (revised 2026-08-28, #118):** it claims exactly
-one chord, `Mod+Enter`, and nothing else. Bare `Enter`, `Shift+Enter` and
+The Ask panel pinned open over a chat is the same composer mount as everywhere: `Mod+Enter` sends,
+and what it sends goes to the chat because the chat's lens is the active lens that can be asked.
+
+**Up recalls what was asked.** The composer puts a bare `ArrowUp` or `ArrowDown` (no Shift, Alt,
+Ctrl or Cmd) to its host's `recall` from `claimKey`, and claims the key only when the host says it
+recalled. The host is the composer mount (`ComposerMount`), and what it recalls is what the
+current editor says was asked of it: the Ask panel reads `questionsAsked()` (the `ask`
+capability's optional read, `contract/lens-capabilities.js`) from `Workspace.activeAskableLens()`
+at the moment of the key, so a question asked weeks ago, before a restart, or a moment ago from
+another window is there. Nothing is remembered of what the panel sent. A chat's lens answers its
+exchanges' questions in order; a note's editor answers the question of each of its ai-blocks in
+document order, without the targets its ask added from the selection. A lens that does not offer
+the read, or has nothing asked, has nothing to recall, and the keys are not claimed. In an
+**empty** draft (one holding no block that says anything, an attachment counting as something)
+`ArrowUp` puts back the last question asked, and `ArrowUp` again the one before, with the caret at
+its end; on the oldest it is claimed and stays. `ArrowDown` comes forward, and past the newest
+returns to an empty draft; in an empty draft with nothing recalled it is not claimed. A recalled
+question comes back whole: every element it was asked with, in order, each drawn as it would be
+had it just been put there (a quote as a quote, an attachment as its chip and `@Title` mark, code
+as its fence), each a block named afresh; an element of a kind a draft cannot hold (anything but
+prose, code and a reference) is left out. A recalled question that has been edited is the draft
+from then on: neither key is claimed in it. In any draft that is not empty and is not an unedited
+recall, both keys are the editor's own caret keys, exactly as in the matrix. An open picker takes
+both first, as always. The draft itself still belongs to its place, in memory: the uuid of the
+container the panel is pinned open for while it is, the workspace's one place otherwise.
+
+**The composer is EDITOR-FIRST (revised 2026-08-28, #118):** it claims one
+chord, `Mod+Enter`, and otherwise only the recall above. Bare `Enter`, `Shift+Enter` and
 `Alt+Enter` are unclaimed and fall through to the surface exactly as they do
 in `NoteEditor` — list continuation, a code/diagram fence's own newline, an
 empty list item's exit, HardBreak all behave identically in a draft and in a
@@ -473,6 +500,86 @@ mirror: the reader cannot turn its pages, move or zoom its window, or scroll it 
   `Whiteboard`), its strokes and the device; while the tablet is not live and the view waits for
   it, `Waiting for the tablet` and the last page written. Thirty seconds after the last live note
   the view, and its tab, are gone.
+
+### The chat lens
+
+`ChatLens` presents a chat in its one mode, `chat`, as a conversation: each exchange is two
+messages, my question then its answer, in the chat's order, newest at the bottom, read-only.
+Nothing in it edits, removes, reorders, extracts or files an exchange, and nothing shows a version.
+
+- **Keys.** None is claimed. Each message is a tab stop.
+- **Messages.** My question sits at the right in the speaker surface; the answer sits at the left,
+  open, at the column's width, with no bubble. There is no shell round the pair: spacing groups
+  them, a question close to its own answer and clearly further from the answer before it.
+- **Time.** Every message shows its own time under it, always: right-aligned under a question,
+  left-aligned under an answer. A question's is when it was asked, an answer's when it was
+  completed; an answer not yet complete shows none. Under a minute old it reads
+  "a few seconds ago", up to five minutes "N minutes ago", after that the time of day in the
+  platform's locale. The labels move on while the chat is shown, without redrawing a message.
+- **Days.** The thread says the date once: a separator before the first message of each calendar
+  day, "Today", "Yesterday", else the weekday and date (with the year when it is not this year).
+  A question and its answer may fall either side of one. A message never shows a date.
+- **Actions.** Each message has Copy and Quote, in the row with its time. They show on pointer
+  hover **or** keyboard focus of that message, and stay shown on the latest answer; both paths are
+  required, and the actions stay in the tab order while hidden, so focusing one shows them. Copy
+  on a question copies its text; on an answer, the whole answer as markdown. Each block of an
+  answer has its own Copy, shown while that block is hovered or focused, whatever the message is
+  doing; one click copies that block. Retry is offered on the answer of an exchange whose job
+  failed or timed out, and asks it again.
+- **Quote.** Quote on a message is an action, and every press is a quote: it quotes the text
+  selected inside that message when the selection lies within it, otherwise its opening (about
+  200 characters, cut on a word boundary). The lens raises the `quote` surface intent carrying the
+  exchange's id and the quoted text, and the Ask panel puts a quote into its draft (*A quote in the
+  draft*, below). The quote does not move the selection. Nothing on the message is drawn pressed
+  or quoted.
+- **Selection.** The lens's selection is the chat and its last exchange, with no selected text,
+  before, during and after a quote; an empty chat selects nothing. A chat puts forward no target
+  for an ask, so the Ask panel draws no target chip over one. A command run from the Ask panel
+  takes the selection as its context, after a quote as before one.
+- **Open.** Activating an attachment chip under a question, and double-clicking a reference block
+  in either message (a quote included), opens what its address names (`open-container` with the
+  address). A quote's open also carries the text it quotes, as `seek`: what the opener is looking
+  for at that address, handed to the lens that reveals it and read by nothing in between.
+- **Taken to an exchange.** Opening an address that names an exchange of a chat (a quote
+  double-clicked, a mention followed) brings that exchange into view. When the open seeks a text,
+  the one message of the exchange that holds it is brought to the top of the thread and marked for
+  a moment: the question when it holds the text, else the answer when it does. When neither holds
+  it, or nothing is sought, the question is brought to the top and nothing is marked; the lens
+  never guesses. A message holds a text when the text, a trailing ellipsis left off, is found in
+  the message as drawn or in its text with structure markers left out, whitespace not compared, so
+  a quote taken by the message's own Quote, of a selection or of its opening, is always held by
+  it. The mark is the message's own face (the bubble, or the answer's body) tinted with the accent
+  at about 10% to just past its edge, fading out over a second, once; under reduced motion there
+  is no mark. The thread presented next by the open shows the same, and the scroll the tab
+  restores does not undo it.
+- **Quotes in a question.** A question shows the quotes it was asked with in place among its
+  blocks, each drawn as the blockquote it is.
+- **Scroll.** While the reader is at the bottom of the thread, an arriving exchange or answer block
+  is kept in view; a reader who has scrolled up is left where they are. The tab remembers where the
+  reader was, by the same session scroll a note's tab keeps: leaving the tab, and reopening the app,
+  keeps the position, measured up from the newest message, and returning restores it. A reader who
+  was at the newest (within the follow slack) returns to the newest and keeps following; a chat never
+  opened opens there.
+- **Waiting.** While an answer is being written its pending slot counts how long it has been awaited
+  since the exchange was asked: "answering… 12s", whole seconds under a minute, then
+  "answering… 1m 05s". The count moves on once a second while a pending slot is shown, and redraws
+  no message.
+- **Right-click.** Raises no menu of its own; the browser's is suppressed in the lens.
+- **Width.** The thread is one column, the Chat width setting (characters, blank meaning 100);
+  Line width does not reach a chat. Presenting, the thread takes the Presentation width. The Ask
+  panel does not take the thread's width.
+- **The Ask panel** is pinned open while the chat's tab is active, cannot be dismissed there, and
+  has the caret when the chat opens. It is otherwise unchanged: the workspace's one panel, in its
+  pinned presentation, with its grab handle and the height the user dragged it to, its `/`
+  commands, their cue, the target chip and the badges. Leaving the tab returns it to what the user
+  had: pinned, or floating and open or closed as it was; the user's pin is never written by it.
+  Its draft, while pinned for the chat, is the chat's own: leaving the tab keeps it unsent,
+  returning brings it back, another chat has its own, and the floating panel's draft over notes is
+  not touched by any of them. Drafts are held in memory only and go on restart, and a chat's goes
+  when its tab closes or it is deleted. `Mod+Enter` sends; an ask is asked of the chat as a new
+  exchange, and the draft is cleared with the caret left in the next one. `ArrowUp` in the empty
+  draft recalls this chat's own questions, from its exchanges (above). Escape and Mod+Shift+A jump out without hiding
+  it, and Escape does not unpin a panel the user pinned. Explain is not offered.
 
 ## Policy declaration (revised 2026-07-29)
 
@@ -966,7 +1073,8 @@ them and mints no new command in them:
 
 **Sub-rule: `Shift` on an inherited `Mod` chord is that chord's variant or
 reverse, and stays inherited** — `Mod+Shift+Z` redo, `Mod+Shift+G` find previous,
-`Mod+Shift+F` find in notes, `Mod+Shift+O` open library. This is what lets
+`Mod+Shift+F` find in notes, `Mod+Shift+O` open library, `Mod+Shift+N` new chat
+(the variant of `Mod+N`, new note). This is what lets
 `Mod+Shift` be the generate tier without an exception list.
 
 **`Mod+Shift+Alt` is the reserved fourth pattern and is empty.** A command that
@@ -1062,6 +1170,7 @@ Consequences:
 | Chord | Menu item | Action |
 |---|---|---|
 | Mod+N | File › New Note | `htmx.ajax` POST `/api/note/new` |
+| Mod+Shift+N | File › New Chat | `window.sieveWorkspace?.newChat()`, which POSTs `/api/chat` |
 | Mod+S | File › Save | `window.sieveWorkspace?.activeTab?.editor?.flushSave()` |
 | Mod+W | File › Close Tab | `htmx.ajax` POST `/api/tabs/close/{id}` |
 | (menu-click only) | File › Export › Clipboard (Markdown) | `window.sieveWorkspace?.copyDocumentAs('markdown')` |
@@ -1169,7 +1278,7 @@ left alone and passed to the browser's own focus order; it is recognised by
 ## Context menu (revised 2026-08-28, #118)
 
 **A right-click is resolved to the MOUNT it happened in.** The host walks the
-lenses it has mounted — the active tab's document and the Ask panel's draft — and
+lenses it has mounted — the active tab's lens and the Ask panel's draft — and
 claims the gesture for the one whose fixture contains the target. A lens
 publishes the element it was mounted in, so the resolution names no mount and a
 third arrangement needs no third listener. Inside a claimed mount the browser's
@@ -1374,7 +1483,8 @@ hold. Three owners intercept keys, in this order:
 - **`TriggerPopover`** (`frontend/src/static/shell/trigger-popover.js`) — a
   capture-phase `keydown` on the editable root, active **only while the picker is
   open**;
-- **the composer mount's claim** — `Mod+Enter` sends;
+- **the composer mount's claim** — `Mod+Enter` sends; a bare `ArrowUp` / `ArrowDown` recalls a
+  question the current editor says was asked of it, only in an empty draft or an unedited recall (*Per-mount key claims* above);
 - **`AskPanel`** (`frontend/src/static/shell/ask-panel.js`) — a bubble-phase
   `keydown` on the panel, owning `Escape` alone.
 
@@ -1442,6 +1552,35 @@ stay unfindable behind a prefix that went dry before it existed.
 
 **An attachment exists only if a candidate is ACCEPTED.** `@` followed by prose
 that matches nothing stays plain text: no chip, no best guess, no auto-attach.
+
+### A quote in the draft
+
+**A quote is a reference, and a block of the draft.** A lens raises the `quote` surface intent
+carrying what was quoted: `blockId`, the block quoted, and `text`, the quoted text. The workspace
+hands both to the Ask panel with the uuid of the container its active tab holds: the panel mints
+one `reference` block — `uri` the absolute address of that block (`sieve://{container}/{blockId}`,
+through `QuestionList.quotation`), `rel: target`, `displayAs: quote`, and the text under
+`cache.quote` — and the composer mount
+puts it into the draft **after the block the caret is in**, **before it when that block is an empty
+paragraph** (so no empty line is left above the quote, and the paragraph is where writing goes on),
+or last when the caret is in no block of the draft. The caret goes on into the block after it; when the quote is last, that is the editor's
+trailing paragraph. A draft may hold several quotes, each where it was put.
+
+**It is drawn, and it is not text.** The surface paints a `rel` reference only when it declares
+`displayAs`, so a quote is drawn in the body as its renderer draws it — a blockquote of the quoted
+text, plain text and never markdown, with a quiet line saying where it is from — while an attach
+reference is still not drawn there and shows only as its footer chip. A quote is a whole block:
+the arrows select it as one stop, Backspace or Delete on it removes it as any block of the draft is
+removed, and its text cannot be edited (to quote less, select less). Double-click opens what it
+quotes, seeking there the text it quotes, exactly as a quote double-clicked in a chat's thread does
+(`window.sieveWorkspace.openAddress(uri, seek)`; the chat lens's *Taken to an exchange*). The harvest carries every quote in place, in order, with its attrs; the question as asked
+draws them where they were written.
+
+**Only the lens says a quote happened, and a quote is not a selection.** A selection that moves,
+whatever text it carries, puts nothing into the draft: the `quote` intent is the one signal, and
+the panel answers it the same way whatever the container is. Raising it does not move the lens's
+selection, and the panel neither reads the selection context to find the quote nor changes what
+its target chip shows, so a send after a quote acts on the ordinary context.
 
 ### The chip is a view of the token (#74 P6)
 

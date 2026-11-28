@@ -308,7 +308,7 @@ func (f *fakeSmartImage) MarkdownRepresentation(blk domain.SieveBlock, uuid stri
 	}
 	return "![](/sieve/" + uuid + "/" + src + ")"
 }
-func (f *fakeSmartImage) BuildContext(_ domain.SieveBlock, _ block.DocView, _ map[string]bool) block.AIContext {
+func (f *fakeSmartImage) BuildContext(_ domain.SieveBlock, _ block.ContainerView, _ map[string]bool) block.AIContext {
 	return block.AIContext{}
 }
 func (f *fakeSmartImage) DescribeJob(_ block.JobContext) *block.ProcessorJob {

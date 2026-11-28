@@ -1,12 +1,16 @@
 package editor
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
+	"sieve/ident"
 	"sieve/sieve/block"
 	"sieve/sieve/domain"
 	"sieve/sieve/services"
@@ -146,7 +150,8 @@ func TestNodeSession_OpensTheNodesOneBlockAndClosesWhenItNoLongerResolves(t *tes
 }
 
 // A block container and a node are read-only sessions: every document verb refuses them, naming
-// what they are, and leaves what they hold as it was.
+// what they are, and leaves what they hold as it was. They hold no jobs: an answer is refused, and
+// a dispatch or a run of a job does nothing.
 func TestReadOnlySessions_RefuseEveryDocumentVerb(t *testing.T) {
 	for _, session := range []struct {
 		name, says string
@@ -181,7 +186,8 @@ func TestReadOnlySessions_RefuseEveryDocumentVerb(t *testing.T) {
 				}},
 				{"delete-block", func() error { return es.HandleBlockOp(uuid, block.BlockOp{Type: "delete-block", BlockID: uuid}) }},
 				{"doc-update", func() error { return es.UpdateMarkdown(uuid, "# replaced") }},
-				{"retry merge", func() error {
+				{"retry-block-job", func() error { return es.RetryBlockJob(uuid, uuid) }},
+				{"update-block merge", func() error {
 					return es.UpdateBlock(uuid, domain.SieveBlock{ID: uuid, Attrs: map[string]interface{}{"status": "PENDING"}})
 				}},
 				{"text-replace", func() error {
@@ -200,6 +206,10 @@ func TestReadOnlySessions_RefuseEveryDocumentVerb(t *testing.T) {
 				{"transform", func() error {
 					_, _, err := es.CreateBlockFromEntries(uuid, kind, entries, block.ActionTransform, uuid)
 					return err
+				}},
+				{"jobs", func() error { _, err := es.sessionFor(uuid).jobs(); return err }},
+				{"append-to-answer", func() error {
+					return es.AppendToAnswer(domain.Exchange{Container: uuid, Block: uuid}, domain.NewSieveBlock(block.KindProse, "", nil), false)
 				}},
 			} {
 				t.Run(tc.name, func(t *testing.T) {
@@ -220,6 +230,9 @@ func TestReadOnlySessions_RefuseEveryDocumentVerb(t *testing.T) {
 					t.Errorf("%s = %+v, want nothing", name, res)
 				}
 			}
+			es.DispatchJobIfNeeded(uuid, uuid)
+			es.RunJob(context.Background(), uuid, uuid)
+			es.WaitForJobs()
 			if after, _ := es.FrontendBlocks(uuid); fmt.Sprint(after) != fmt.Sprint(before) {
 				t.Errorf("a refused verb changed the session: %+v → %+v", before, after)
 			}
@@ -292,7 +305,9 @@ type namingListener struct {
 	named []string
 }
 
-func (l *namingListener) OnContainerNamed(uuid, name string) { l.named = append(l.named, uuid+" "+name) }
+func (l *namingListener) OnContainerNamed(uuid, name string) {
+	l.named = append(l.named, uuid+" "+name)
+}
 
 // An open block container answers what it is called; a write that changes the name, a Save or a
 // SaveMeta alike, reaches the open session as the new name, and one that leaves it alone does not.
@@ -319,5 +334,206 @@ func TestContainerSession_ANewNameReachesTheOpenSession(t *testing.T) {
 	}
 	if name, _ := es.ContainerName(uuid); name != "renamed" || strings.Join(heard.named, ",") != uuid+" renamed" {
 		t.Errorf("ContainerName = %q, heard %v", name, heard.named)
+	}
+}
+
+// answerTexts are the contents of the blocks of exchange's answer, in order.
+func answerTexts(exchange domain.SieveBlock) []string {
+	var out []string
+	for _, el := range exchange.Elements(block.AnswerAttr) {
+		out = append(out, el.Content())
+	}
+	return out
+}
+
+// An exchange asked in a chat becomes an ai-block whose question is the asked
+// blocks verbatim, is saved, announced as a created block and answered: with
+// blocks written through add_to_answer, its final message discarded, or with its
+// final message. It is answered alike when the chat is closed before the answer
+// settles: what was written while it was open is kept, and the settle opens the
+// chat for the write and closes it again. The saves that follow the first
+// question name the untitled chat once, by that question's opening words.
+// The end of the exchange's job is heard once, after the save that holds its
+// answer.
+func TestChatSession_AnExchangeIsAnsweredOpenOrClosed(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		written []string // blocks the model writes with add_to_answer
+		closes  bool     // the chat is closed before the answer settles
+		want    []string
+	}{
+		{"written with add_to_answer, in an open chat", []string{"First block.", "Second block."}, false, []string{"First block.", "Second block."}},
+		{"written with add_to_answer, in a chat closed before it settles", []string{"First block.", "Second block."}, true, []string{"First block.", "Second block."}},
+		{"a final message, in an open chat", nil, false, []string{"the final message"}},
+		{"a final message, in a chat closed before it settles", nil, true, []string{"the final message"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			wrote, release := make(chan struct{}), make(chan struct{})
+			var es *EditorService
+			var endpoint *answerEndpoint
+			es, chats, endpoint, uuid := newChatEditor(t, func(domain.Exchange) (string, error) {
+				for _, text := range tc.written {
+					if err := endpoint.write(es, text); err != nil {
+						return "", err
+					}
+				}
+				if tc.closes {
+					close(wrote)
+					<-release
+				}
+				return "the final message", nil
+			})
+			saves := newRecordingSaves()
+			es.SetSavedNotifier(saves)
+			es.SetChatAnsweredListener(saves)
+			var created []string
+			es.SetLifecycleListener(&mockLifecycleListener{onCreated: func(_, kind, id, _ string) { created = append(created, kind+" "+id) }})
+			if err := es.Open(uuid); err != nil {
+				t.Fatalf("Open: %v", err)
+			}
+
+			id, err := es.AppendExchange(uuid, []domain.SieveBlock{prose("What is a chat?"), prose("And a turn?")})
+			if err != nil {
+				t.Fatalf("AppendExchange: %v", err)
+			}
+			if fact := saves.await(t, time.Second); fact.uuid != uuid {
+				t.Errorf("the save announced %q, want the chat %q", fact.uuid, uuid)
+			}
+			if fmt.Sprint(created) != fmt.Sprint([]string{block.KindAIBlock + " " + id}) {
+				t.Errorf("created = %v, want the exchange", created)
+			}
+			if tc.closes {
+				<-wrote
+				es.Close(uuid)
+				close(release)
+			}
+			es.WaitForJobs()
+
+			if open := es.sessionFor(uuid) != nil; open == tc.closes {
+				t.Errorf("the chat is open: %v, want %v", open, !tc.closes)
+			}
+			if got, want := saves.namings(), []string{uuid + " What is a chat? And a turn?"}; fmt.Sprint(got) != fmt.Sprint(want) {
+				t.Errorf("the chat was named %v, want %v", got, want)
+			}
+			// The ask is heard once; the saves that write its answer are not asks.
+			if got, want := saves.asks(), []string{uuid}; fmt.Sprint(got) != fmt.Sprint(want) {
+				t.Errorf("the chat was asked %v, want %v", got, want)
+			}
+			if got, want := saves.answers(), []string{uuid}; fmt.Sprint(got) != fmt.Sprint(want) {
+				t.Errorf("the end of the exchange's job was heard %v, want %v", got, want)
+			}
+			stored, err := chats.Load(uuid)
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			exchanges := stored.Exchanges()
+			if len(exchanges) != 1 || exchanges[0].ID != id || exchanges[0].Kind != block.KindAIBlock {
+				t.Fatalf("the chat holds %+v, want the one exchange", exchanges)
+			}
+			var question []string
+			for _, el := range exchanges[0].Elements(block.QuestionAttr) {
+				if el.ID == "" {
+					t.Errorf("a question element has no id: %+v", el)
+				}
+				question = append(question, el.Kind+": "+el.Content())
+			}
+			if fmt.Sprint(question) != fmt.Sprint([]string{"prose: What is a chat?", "prose: And a turn?"}) {
+				t.Errorf("question = %v, want the asked blocks in order", question)
+			}
+			if got := answerTexts(exchanges[0]); exchanges[0].Status() != block.BlockStatusComplete || fmt.Sprint(got) != fmt.Sprint(tc.want) {
+				t.Errorf("answer = %v (status %s), want %v, COMPLETE", got, exchanges[0].Status(), tc.want)
+			}
+		})
+	}
+}
+
+// A chat only grows. An exchange with no answer is kept across a close and a
+// reopen, and may be asked again: its job runs and answers it. An answered
+// exchange, or one being answered, is not asked again, and nothing that is not
+// an exchange of an open chat is retried or asked. A job a restart stranded is
+// run again when the chat is opened.
+func TestChatSession_TheListOnlyGrows(t *testing.T) {
+	var fails atomic.Bool
+	fails.Store(true)
+	es, chats, _, uuid := newChatEditor(t, func(domain.Exchange) (string, error) {
+		if fails.Load() {
+			return "", errors.New("cli exited with status 1")
+		}
+		return "An answer.", nil
+	})
+	if err := es.Open(uuid); err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	id, err := es.AppendExchange(uuid, []domain.SieveBlock{prose("Will this fail?")})
+	if err != nil {
+		t.Fatalf("AppendExchange: %v", err)
+	}
+	es.WaitForJobs()
+	es.Close(uuid)
+	if err := es.RetryBlockJob(uuid, id); !errors.Is(err, ErrNotOpen) {
+		t.Errorf("a retry in a closed chat: %v, want ErrNotOpen", err)
+	}
+	if _, err := es.AppendExchange(uuid, []domain.SieveBlock{prose("Closed?")}); !errors.Is(err, ErrNotOpen) {
+		t.Errorf("an ask in a closed chat: %v, want ErrNotOpen", err)
+	}
+
+	if err := es.Open(uuid); err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	blocks, _ := es.Blocks(uuid)
+	if len(blocks) != 1 || blocks[0].ID != id || blocks[0].Status() != block.BlockStatusError || len(answerTexts(blocks[0])) != 0 {
+		t.Fatalf("after a reopen the chat holds %+v, want the unanswered exchange", blocks)
+	}
+
+	fails.Store(false)
+	if err := es.RetryBlockJob(uuid, id); err != nil {
+		t.Fatalf("a retry of an unanswered exchange: %v", err)
+	}
+	es.WaitForJobs()
+	blocks, _ = es.Blocks(uuid)
+	if fmt.Sprint(answerTexts(blocks[0])) != fmt.Sprint([]string{"An answer."}) || blocks[0].StringAttr("error") != "" {
+		t.Fatalf("the retry left %+v, want the exchange answered", blocks[0].Attrs)
+	}
+
+	for name, retry := range map[string]func() error{
+		"an answered exchange": func() error { return es.RetryBlockJob(uuid, id) },
+		"an id the chat lacks": func() error { return es.RetryBlockJob(uuid, ident.New()) },
+	} {
+		if err := retry(); err == nil {
+			t.Errorf("a retry of %s was taken", name)
+		}
+	}
+	if err := es.sessionFor(uuid).admitRetry(blocks[0].Elements(block.AnswerAttr)[0].ID); err != nil {
+		t.Errorf("a block nested in an answer is refused by the chat's own rule: %v", err)
+	}
+	if _, err := es.AppendExchange(uuid, nil); err == nil {
+		t.Error("an ask with no question was taken")
+	}
+	if after, _ := es.Blocks(uuid); len(after) != 1 || fmt.Sprint(answerTexts(after[0])) != fmt.Sprint([]string{"An answer."}) {
+		t.Errorf("a refused verb changed the chat: %+v", after)
+	}
+	if err := es.Flush(uuid); !errors.Is(err, ErrNotDocument) || !strings.Contains(err.Error(), "is a chat") {
+		t.Errorf("a document verb in a chat: %v, want ErrNotDocument naming a chat", err)
+	}
+	es.Close(uuid)
+
+	stranded := answeredExchange("Stranded?", "")
+	stranded.SetElements(block.AnswerAttr, nil)
+	stranded.Attrs["status"] = block.BlockStatusDispatched
+	c, err := chats.Load(uuid)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	c.SetExchanges(append(c.Exchanges(), stranded))
+	if _, err := chats.Save(c); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if err := es.Open(uuid); err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	es.WaitForJobs()
+	stored, _ := chats.Load(uuid)
+	if got := stored.Exchanges(); len(got) != 2 || got[1].Status() != block.BlockStatusComplete || fmt.Sprint(answerTexts(got[1])) != fmt.Sprint([]string{"An answer."}) {
+		t.Errorf("the stranded exchange was not run again on open: %+v", got)
 	}
 }

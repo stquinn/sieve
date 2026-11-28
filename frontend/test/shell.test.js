@@ -55,12 +55,15 @@ import { PromptEditor } from '../src/static/lens/prompt/prompt-editor.js'
 import { BlockLens } from '../src/static/lens/block/block-lens.js'
 import { DigitalNoteLens } from '../src/static/lens/ink/digital-note-lens.js'
 import { LiveInkLens } from '../src/static/lens/ink/live-ink-lens.js'
+import { ChatLens } from '../src/static/lens/chat/chat-lens.js'
 import { LensTable } from '../src/static/shell/lens-table.js'
 import { ProviderAdapter } from '../src/static/container/provider-adapter.js'
 import { InkProviderAdapter } from '../src/static/container/ink-provider-adapter.js'
+import { ChatProviderAdapter } from '../src/static/container/chat-provider-adapter.js'
 import { WholeContentAdapter } from '../src/static/container/whole-content-adapter.js'
 import { BlockProviderAdapter } from '../src/static/container/block-provider-adapter.js'
-import { AbstractSurface } from '../src/static/lens/abstract-surface.js'
+import { AbstractSurface, SurfaceIntent } from '../src/static/lens/abstract-surface.js'
+import { AskPanel } from '../src/static/shell/ask-panel.js'
 import { EditorMode } from '../src/static/lens/document-editor/editor-mode.js'
 import { blockInsertPos } from '../src/static/lens/document-editor/surfaces/ai-target.js'
 import { blockIndexForInsert, emptyParagraphAnchor } from '../src/static/lens/document-editor/surfaces/block-position.js'
@@ -957,20 +960,22 @@ describe('AbstractEditor.presentMode — the host names a mode, the lens fetches
 
 describe('the workspace LensTable — a kind decides the lens, never a uuid', () => {
   it.each([
-    ['note', NoteEditor, BlockProviderAdapter, true, true],
-    ['buffer', NoteEditor, BlockProviderAdapter, true, true],
-    ['prompt', PromptEditor, WholeContentAdapter, false, false],
-    ['code', BlockLens, ProviderAdapter, true, false],
-    ['digital-note', DigitalNoteLens, InkProviderAdapter, true, false],
-    ['ink-live', LiveInkLens, InkProviderAdapter, true, false],
-    ['a-kind-nothing-draws', BlockLens, ProviderAdapter, true, false],
-    ['', NoteEditor, BlockProviderAdapter, true, true],
-  ])('%j mounts its lens over its provider', (kind, lens, provider, channel, isDocument) => {
+    ['note', NoteEditor, BlockProviderAdapter, true, true, false],
+    ['buffer', NoteEditor, BlockProviderAdapter, true, true, false],
+    ['prompt', PromptEditor, WholeContentAdapter, false, false, false],
+    ['code', BlockLens, ProviderAdapter, true, false, false],
+    ['digital-note', DigitalNoteLens, InkProviderAdapter, true, false, false],
+    ['ink-live', LiveInkLens, InkProviderAdapter, true, false, false],
+    ['chat', ChatLens, ChatProviderAdapter, true, false, true],
+    ['a-kind-nothing-draws', BlockLens, ProviderAdapter, true, false, false],
+    ['', NoteEditor, BlockProviderAdapter, true, true, false],
+  ])('%j mounts its lens over its provider', (kind, lens, provider, channel, isDocument, pinsAskPanel) => {
     const mounting = SieveWorkspace.lensTable.lookup(kind)
     expect(mounting.lens).toBe(lens)
     expect(mounting.provider).toBe(provider)
     expect(mounting.channel).toBe(channel)
     expect(mounting.document).toBe(isDocument)
+    expect(!!mounting.pinsAskPanel).toBe(pinsAskPanel)
     expect(Object.isFrozen(mounting)).toBe(true)
   })
 
@@ -1427,13 +1432,14 @@ describe('SieveWorkspace.activateDocument editor lifecycle (P2.A fix wave)', () 
     expect([tabA.editor.viewState, w.getTab('doc-b').viewState]).toEqual([state, null])
   })
 
-  // The leaf an address names reaches the lens of the container it opened at the
-  // activation that open causes — a new lens, or the one kept — and only there.
+  // The leaf an address names, and the text sought there, reach the lens of the
+  // container it opened at the activation that open causes — a new lens, or the
+  // one kept — and only there.
   describe('openAddress reveals the leaf the address names', () => {
-    /** @param {SieveWorkspace} w @param {string} uuid @param {string} blockId */
-    const openAt = async (w, uuid, blockId) => {
+    /** @param {SieveWorkspace} w @param {string} uuid @param {string} blockId @param {string} [seek] */
+    const openAt = async (w, uuid, blockId, seek) => {
       vi.spyOn(w.mentionService, 'resolve').mockResolvedValue(/** @type {any} */ ({ found: true, uuid, blockId }))
-      expect(await w.openAddress('sieve://' + uuid + (blockId ? '/' + blockId : ''))).toBe(true)
+      expect(await w.openAddress('sieve://' + uuid + (blockId ? '/' + blockId : ''), seek)).toBe(true)
     }
     let prevHtmx
     beforeEach(() => {
@@ -1443,16 +1449,17 @@ describe('SieveWorkspace.activateDocument editor lifecycle (P2.A fix wave)', () 
     afterEach(() => { window.htmx = prevHtmx })
 
     it.each([
-      ['a container not open', [], 'doc-a', 'b7', [['doc-a', 'b7']]],
-      ['a container open in another tab', ['doc-a', 'doc-b'], 'doc-a', 'b7', [['doc-a', 'b7']]],
-      ['the active container', ['doc-a'], 'doc-a', 'b7', [['doc-a', 'b7']]],
-      ['a whole container', [], 'doc-a', '', []],
-    ])('%s', async (_name, before, uuid, blockId, want) => {
+      ['a container not open', [], 'doc-a', 'b7', undefined, [['doc-a', 'b7', undefined]]],
+      ['a container open in another tab', ['doc-a', 'doc-b'], 'doc-a', 'b7', undefined, [['doc-a', 'b7', undefined]]],
+      ['the active container', ['doc-a'], 'doc-a', 'b7', undefined, [['doc-a', 'b7', undefined]]],
+      ['a leaf and the text sought there, as given', [], 'doc-a', 'b7', ' the quoted words…', [['doc-a', 'b7', ' the quoted words…']]],
+      ['a whole container', [], 'doc-a', '', 'the quoted words', []],
+    ])('%s', async (_name, before, uuid, blockId, seek, want) => {
       const w = loggingWorkspace([])
       for (const id of before) w.activateDocument(id, edOpts)
-      /** @type {Array<[string, string]>} */ const revealed = []
-      vi.spyOn(Lens.prototype, 'reveal').mockImplementation(function (leaf) { revealed.push([this.uuid, leaf]) })
-      await openAt(w, uuid, blockId)
+      /** @type {Array<[string, string, string|undefined]>} */ const revealed = []
+      vi.spyOn(Lens.prototype, 'reveal').mockImplementation(function (leaf, sought) { revealed.push([this.uuid, leaf, sought]) })
+      await openAt(w, uuid, blockId, seek)
       expect(revealed).toEqual([])
       w.activateDocument(uuid, edOpts)
       w.activateDocument(uuid, edOpts)
@@ -1540,6 +1547,76 @@ describe('SieveWorkspace.activateDocument editor lifecycle (P2.A fix wave)', () 
     expect(FakeSocket.instances.length).toBe(1)
   })
 
+  describe("the Ask panel, pinned open for a tab whose mounting says so", () => {
+    /** A workspace whose chrome includes the one Ask panel, over its structural DOM. */
+    function withPanel() {
+      document.body.innerHTML = '<div id="ask-panel" class="ask-panel"><div class="ask-composer">' +
+        '<div class="ask-handle"></div><div class="ask-popup__input"></div>' +
+        '<div class="ask-popup__footer"><button class="ask-popup__send">Send</button></div></div></div>'
+      vi.spyOn(ComposerEditor.prototype, 'presentSurface').mockImplementation(() => /** @type {any} */ (null))
+      const w = loggingWorkspace([])
+      w.bootChrome()
+      return { w, el: /** @type {HTMLElement} */ (document.getElementById('ask-panel')) }
+    }
+    afterEach(() => { document.body.innerHTML = ''; vi.restoreAllMocks() })
+
+    it.each([
+      ['chat', ChatLens, true],
+      ['note', NoteEditor, false],
+      ['code', BlockLens, false],
+    ])('a %s tab gets its lens, and the panel pinned open only where its kind says so', (kind, lens, pinned) => {
+      const { w, el } = withPanel()
+      const tab = w.activateDocument('doc-' + kind, edOpts, kind)
+      expect(tab.editor).toBeInstanceOf(lens)
+      expect(el.classList.contains('is-pinned')).toBe(pinned)
+      expect(el.classList.contains('is-open')).toBe(pinned)
+    })
+
+    it('is ONE panel across a chat and a note, pinned open only while the chat is active, the chat\'s draft its own', () => {
+      const { w, el } = withPanel()
+      const panel = w.askPanel
+      w.activateDocument('doc-chat', edOpts, 'chat')
+      const chatDraft = panel?.composer?.provider
+      expect(panel?.composer?.place).toBe('doc-chat')
+      expect(panel?.composer?.editor).toBeInstanceOf(ComposerEditor)
+      w.activateDocument('doc-a', edOpts)
+      expect(w.askPanel).toBe(panel)
+      expect(panel?.composer?.place).toBe('')
+      expect(el.classList.contains('is-pinned')).toBe(false)
+      w.activateDocument('doc-chat', edOpts, 'chat')
+      expect(el.classList.contains('is-pinned')).toBe(true)
+      expect(panel?.composer?.provider).toBe(chatDraft)
+      w.activateDocument('', edOpts)
+      expect(el.classList.contains('is-pinned')).toBe(false)
+    })
+
+    it('hands the panel a quote with the uuid of the container the active tab holds, and asks nothing else of it on any other event', () => {
+      const { w } = withPanel()
+      const quote = vi.spyOn(AskPanel.prototype, 'insertQuote').mockImplementation(() => {})
+      w.activateDocument('doc-chat', edOpts, 'chat')
+      w.onEditorModeEvent({ type: 'selection-changed' })
+      w.onEditorModeEvent({ type: SurfaceIntent.QUOTE, blockId: 'x-1', text: 'the scanner trims' })
+      expect(quote.mock.calls).toEqual([['doc-chat', 'x-1', 'the scanner trims']])
+    })
+
+    it.each([
+      ['its tab closes', (/** @type {SieveWorkspace} */ w) => w.closeTab('doc-chat')],
+      ['it is deleted', (/** @type {SieveWorkspace} */ w) => {
+        w.bootEditorLifecycle()
+        document.dispatchEvent(new CustomEvent('sieve:container-deleted', { detail: { uuid: 'doc-chat' } }))
+      }],
+    ])('a chat\'s draft goes when %s', (_name, gone) => {
+      const { w } = withPanel()
+      const panel = w.askPanel
+      w.activateDocument('doc-chat', edOpts, 'chat')
+      const chatDraft = panel?.composer?.provider
+      w.activateDocument('doc-a', edOpts)
+      gone(w)
+      w.activateDocument('doc-chat', edOpts, 'chat')
+      expect(panel?.composer?.provider).not.toBe(chatDraft)
+    })
+  })
+
   describe('the workspace toolbar', () => {
     /** A workspace over a toolbar host in the document. */
     function withToolbar() {
@@ -1582,7 +1659,7 @@ describe('SieveWorkspace.activateDocument editor lifecycle (P2.A fix wave)', () 
     const tab = w.activateDocument('blk-1', edOpts, 'code')
     expect(tab.editor).toBeInstanceOf(BlockLens)
     expect(tab.mount.provider.constructor).toBe(ProviderAdapter)
-    expect(tab.editor.getCapabilities()).toEqual({ markdown: false, mentions: false, commands: false, blocks: false })
+    expect(tab.editor.getCapabilities()).toEqual({ markdown: false, mentions: false, commands: false, blocks: false, ask: false })
     expect(log).toEqual(['open:ws://test/api/ws/document/blk-1'])
   })
 })
@@ -1972,7 +2049,7 @@ describe('the wall is the whole surface (issue #96)', () => {
   // The caret-reading verbs are a ProseMirror editor's; extract and askAi are a note's.
   const CARET_VERBS = ['captureImageInsert', 'captureInsertPos', 'insertAnchorForBlock', 'insertAnchorAt',
     'peekInsertAnchor', 'peekInsertAnchorForBlock', 'peekInsertAnchorAt', 'consumeInsertAnchor']
-  const NOTE_VERBS = ['extract', 'askAi']
+  const NOTE_VERBS = ['extract', 'askAi', 'questionsAsked']
   it.each([
     { lens: 'NoteEditor', make: () => makeNote('n'), proseMirror: true, note: true },
     { lens: 'ComposerEditor', make: () => new ComposerEditor('d', { provider: fakeProvider() }), proseMirror: true, note: false },
@@ -2621,6 +2698,28 @@ describe('NoteEditor.askAi (the single AI-job seam, pure over context)', () => {
     }, undefined)
   })
 
+  // WHAT WAS ASKED OF IT is read from the document: each ai-block's question as
+  // its asker wrote it, in document order, without the targets the ask added.
+  it('questionsAsked: each ai-block\'s question in document order, the targets askAi added left out, an Explain absent', () => {
+    const quote = { kind: 'reference', attrs: { uri: 'sieve://u/b1', rel: 'target', displayAs: 'quote', cache: { quote: 'the region column' } } }
+    const attachment = { kind: 'reference', attrs: { uri: 'sieve://other', rel: 'attach', cache: { title: 'Auth Design' } } }
+    const target = { kind: 'reference', attrs: { uri: 'sieve://u/b1', rel: 'target' } }
+    /** @type {Record<string, any>} */
+    const blocks = {
+      a1: { id: 'a1', kind: 'ai-block', attrs: { type: 'ASK', question: [target, { kind: 'prose', attrs: { content: 'first?' } }] } },
+      p1: { id: 'p1', kind: 'prose', attrs: { content: 'text' } },
+      e1: { id: 'e1', kind: 'ai-block', attrs: { type: 'EXPLAIN', question: [target] } },
+      a2: { id: 'a2', kind: 'ai-block', attrs: { type: 'ASK', question: [target, quote, { kind: 'prose', attrs: { content: 'why?' } }, attachment] } },
+    }
+    const provider = fakeProvider({ getOrder: () => ['a1', 'p1', 'e1', 'a2'], getBlock: (/** @type {string} */ id) => blocks[id] || null })
+    const asked = noteRig('u', { provider }).ed.questionsAsked()
+    expect(asked).toEqual([
+      [{ kind: 'prose', attrs: { content: 'first?' } }],
+      [quote, { kind: 'prose', attrs: { content: 'why?' } }, attachment],
+    ])
+    expect(Object.isFrozen(asked) && Object.isFrozen(asked[1]) && Object.isFrozen(asked[1][0].attrs)).toBe(true)
+  })
+
   it('falls back to the whole document when buildAiContext yields no blockRef', async () => {
     const rig = seamRig('wysiwyg', { kind: 'document', ref: '', label: 'Document' })
     vi.mocked(buildAiContext).mockReturnValueOnce({})   // no blockRef
@@ -3090,17 +3189,21 @@ describe('SieveWorkspace block verbs — addressed to the active BLOCK editor', 
   afterEach(() => { document.body.innerHTML = '' })
 
   it.each([
-    ['a note', () => makeNote('n'), true],
-    ['a prompt', () => new PromptEditor('prompt:p', { provider: wholeContentProvider() }), false],
-  ])('activeBlockEditor answers for %s only when it can edit blocks', (_label, make, isBlockEditor) => {
+    ['a note', () => makeNote('n'), true, true],
+    ['a prompt', () => new PromptEditor('prompt:p', { provider: wholeContentProvider() }), false, false],
+    ['a chat', () => new ChatLens('chat-1', { provider: fakeProvider({ getExchanges: () => [], requestAsk: vi.fn(), nameNow: vi.fn(), rename: vi.fn() }) }), false, true],
+    ['a block container', () => new BlockLens('blk-1', { provider: fakeProvider() }), false, false],
+  ])('for %s, activeBlockEditor answers only when it can edit blocks and activeAskableLens only when it can be asked', (_label, make, isBlockEditor, isAskable) => {
     const ed = make()
     const { w } = activeWith(ed)
     expect(w.activeBlockEditor()).toBe(isBlockEditor ? ed : null)
+    expect(w.activeAskableLens()).toBe(isAskable ? ed : null)
     ed.destroy()
   })
 
-  it('with no tab open there is no block editor', () => {
+  it('with no tab open there is no block editor and nothing to ask', () => {
     expect(new SieveWorkspace().activeBlockEditor()).toBeNull()
+    expect(new SieveWorkspace().activeAskableLens()).toBeNull()
   })
 
   it('beginFileAttach captures the anchor BEFORE the picker opens, and attachFile spends it once', async () => {
@@ -3218,12 +3321,18 @@ describe('SieveWorkspace tab-lifecycle verbs (P2.D facade)', () => {
     ])
   })
 
-  it("opens the container a lens asks for, through the same open, and nothing for an intent naming none", () => {
-    ws.onEditorModeEvent({ type: 'open-container', uuid: 'note-x' })
-    ws.onEditorModeEvent({ type: 'open-container' })
-    expect(ajaxCalls).toEqual([
-      { method: 'POST', url: '/api/container/open/note-x', opts: { target: '#htmx-tabbar', swap: 'innerHTML' } },
-    ])
+  it.each([
+    ['a uuid, through open', { uuid: 'note-x' }, [], ['note-x']],
+    ['an address, through openAddress', { uri: 'sieve://note-x/b7' }, [['sieve://note-x/b7', undefined]], []],
+    ['an address and the text sought there, both through openAddress, as given', { uri: 'sieve://note-x/b7', seek: '  Quoted text…' }, [['sieve://note-x/b7', '  Quoted text…']], []],
+    ['both, by its address', { uuid: 'note-x', uri: 'sieve://note-y' }, [['sieve://note-y', undefined]], []],
+    ['neither: nothing', {}, [], []],
+  ])('opens what a lens asks for when it names %s', (_name, intent, addresses, uuids) => {
+    const openAddress = vi.spyOn(ws, 'openAddress').mockResolvedValue(true)
+    const open = vi.spyOn(ws, 'open')
+    ws.onEditorModeEvent({ type: 'open-container', ...intent })
+    expect(openAddress.mock.calls).toEqual(addresses)
+    expect(open.mock.calls).toEqual(uuids.map((u) => [u]))
   })
 
   it.each([
@@ -3245,6 +3354,13 @@ describe('SieveWorkspace tab-lifecycle verbs (P2.D facade)', () => {
     ws.newNote()
     expect(ajaxCalls).toEqual([
       { method: 'POST', url: '/api/note', opts: { target: '#htmx-tabbar', swap: 'innerHTML' } },
+    ])
+  })
+
+  it('newChat posts to /api/chat with the tabbar swap', () => {
+    ws.newChat()
+    expect(ajaxCalls).toEqual([
+      { method: 'POST', url: '/api/chat', opts: { target: '#htmx-tabbar', swap: 'innerHTML' } },
     ])
   })
 
@@ -3331,6 +3447,7 @@ describe('SieveWorkspace tab-lifecycle verbs (P2.D facade)', () => {
   it('every verb returns a promise', () => {
     expect(ws.open('d')).toBeInstanceOf(Promise)
     expect(ws.newNote()).toBeInstanceOf(Promise)
+    expect(ws.newChat()).toBeInstanceOf(Promise)
     expect(ws.reorder(0, 1)).toBeInstanceOf(Promise)
     expect(ws.loadTabs()).toBeInstanceOf(Promise)
     expect(ws.close('d')).toBeInstanceOf(Promise)
@@ -3342,6 +3459,7 @@ describe('SieveWorkspace tab-lifecycle verbs (P2.D facade)', () => {
     window.htmx = undefined
     expect(() => ws.open('d')).not.toThrow()
     expect(() => ws.newNote()).not.toThrow()
+    expect(() => ws.newChat()).not.toThrow()
     expect(() => ws.close('d')).not.toThrow()
     expect(() => ws.closeAll()).not.toThrow()
     expect(() => ws.reorder(0, 1)).not.toThrow()

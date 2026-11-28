@@ -7,7 +7,7 @@ import (
 	"sieve/store"
 )
 
-var categories = []store.Category{domain.LibraryCategory, domain.WorkingCopy, domain.State, domain.Blocks}
+var categories = []store.Category{domain.LibraryCategory, domain.WorkingCopy, domain.State, domain.Blocks, domain.Chats}
 
 func TestCategories(t *testing.T) {
 	for _, tc := range []struct {
@@ -20,6 +20,7 @@ func TestCategories(t *testing.T) {
 		{domain.WorkingCopy, "buffers", "Working Copy", store.Isolated, true},
 		{domain.State, "config", "State", store.Isolated, false},
 		{domain.Blocks, "blocks", "Blocks", store.Shared, true},
+		{domain.Chats, "chats", "Chats", store.Shared, true},
 	} {
 		c := tc.cat
 		if c.Key != tc.key || c.DisplayName != tc.name || c.Isolation != tc.isolation || c.MetaEnabled != tc.metaEnabled {

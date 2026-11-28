@@ -10,11 +10,14 @@
 // IT HAS ONE SURFACE. There is no markdown half to flip to: a draft's container
 // offers no whole-content projection to flip through.
 //
-// IT CLAIMS MOD+ENTER, AND NOTHING ELSE. This mount is EDITOR-FIRST: Enter,
-// Shift+Enter and Alt+Enter are pure native editor behaviour here exactly as in
-// NoteEditor, so list continuation, a fence's own newline and an empty item's
-// exit all come free. Only Mod+Enter finishes a message — the same convention a
-// rich chat input (Slack, Notion AI) uses to keep Enter itself structural.
+// IT CLAIMS MOD+ENTER, AND BARE UP AND DOWN ONLY WHEN ITS HOST RECALLS. This
+// mount is EDITOR-FIRST: Enter, Shift+Enter and Alt+Enter are pure native editor
+// behaviour here exactly as in NoteEditor, so list continuation, a fence's own
+// newline and an empty item's exit all come free. Only Mod+Enter finishes a
+// message — the same convention a rich chat input (Slack, Notion AI) uses to
+// keep Enter itself structural. A bare Up or Down is put to the host's `recall`,
+// and claimed only when the host says it recalled; otherwise it is the editor's
+// own caret key.
 //
 // It carries no toolbar — that is NoteEditor's — and it saves by the inherited
 // flush alone: pending edits reach the draft container, and persisting is a
@@ -28,7 +31,19 @@ import { LensCapability } from '../../../contract/lens-capabilities.js'
 /** The one surface a draft has. */
 const COMPOSER_MODES = Object.freeze([EditorMode.WYSIWYG])
 
+/**
+ * @typedef {import('../../abstract-editor.js').AbstractEditorOptions & {
+ *   recall?: ((step: -1|1) => boolean)|null,
+ * }} ComposerEditorOptions
+ * `recall` is the host's answer to a bare Up (-1, older) or Down (1, newer) in
+ * this draft: it returns whether it recalled a message, which is whether the
+ * key is claimed. Without one neither key is ever claimed.
+ */
+
 export class ComposerEditor extends ProseMirrorEditor {
+  /** @type {((step: -1|1) => boolean)|null} */
+  #recall
+
   /** @type {Array<() => void>} who is told the message is finished */
   #submitListeners = []
 
@@ -40,6 +55,15 @@ export class ComposerEditor extends ProseMirrorEditor {
 
   /** @type {Array<() => void>} who is asked to retire this draft */
   #clearListeners = []
+
+  /**
+   * @param {string} uuid
+   * @param {ComposerEditorOptions} [options]
+   */
+  constructor(uuid, options = {}) {
+    super(uuid, options)
+    this.#recall = options.recall || null
+  }
 
   /**
    * @protected
@@ -63,6 +87,7 @@ export class ComposerEditor extends ProseMirrorEditor {
   get _innateCapabilities() {
     return Object.freeze(Object.assign({}, super._innateCapabilities, {
       [LensCapability.BLOCKS]: false,
+      [LensCapability.ASK]: false,
     }))
   }
 
@@ -77,17 +102,24 @@ export class ComposerEditor extends ProseMirrorEditor {
   }
 
   /**
-   * @override — this mount's ONE key claim: Mod+Enter sends. Bare Enter,
-   * Shift+Enter and Alt+Enter all fall through to the surface unclaimed, so
-   * the editor's native Enter family — list continuation, a fence's own
-   * newline, an empty item's exit — behaves exactly as it does in NoteEditor.
+   * @override — Mod+Enter sends; a bare Up or Down is claimed when the host's
+   * `recall` recalled. Bare Enter, Shift+Enter and Alt+Enter all fall through to
+   * the surface unclaimed, so the editor's native Enter family — list
+   * continuation, a fence's own newline, an empty item's exit — behaves exactly
+   * as it does in NoteEditor.
    * @param {KeyboardEvent} event
    * @returns {boolean}
    */
   claimKey(event) {
-    if (event.key !== 'Enter' || !window.isMod(event)) return false
-    this.#notifySubmit()
-    return true
+    if (event.key === 'Enter' && window.isMod(event)) {
+      this.#notifySubmit()
+      return true
+    }
+    const bare = !event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey
+    if (bare && this.#recall && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
+      return this.#recall(event.key === 'ArrowUp' ? -1 : 1)
+    }
+    return false
   }
 
   /**

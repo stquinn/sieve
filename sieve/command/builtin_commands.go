@@ -1,10 +1,12 @@
 package command
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
+	"sieve/sieve/domain"
 	"sieve/sieve/services"
 )
 
@@ -72,8 +74,15 @@ func (c *StatsCommand) Description() string { return "Word count, character coun
 func (c *StatsCommand) Family() string      { return FamilyUtil }
 func (c *StatsCommand) ResultKind() string  { return "command-result" }
 
+// Build refuses an invocation with no text and no selection from a container
+// that is not a document, such as a chat: there is nothing it could measure.
 func (c *StatsCommand) Build(text string, ctx Context) (Job, error) {
 	createdAt := time.Now().UTC().Format(time.RFC3339)
+	if strings.TrimSpace(text) == "" && strings.TrimSpace(ctx.SelectedText) == "" && ctx.DocUUID != "" && c.docs != nil {
+		if _, err := c.docs.LoadByUUID(ctx.DocUUID); errors.Is(err, domain.ErrNotADocument) {
+			return Job{}, fmt.Errorf("/stats measures a document, a selection or the text after it, and this is not a document")
+		}
+	}
 
 	return Job{
 		Label:   "/stats",

@@ -154,7 +154,7 @@ func TestAnswersTo_ElementIDsAreNotHandles(t *testing.T) {
 		t.Fatalf("AnswersTo = %v, want the block's own handles only", got)
 	}
 
-	sd := ShadowDocument{Blocks: []domain.SieveBlock{b}}
+	sd := ShadowDocument{LiveBlocks: LiveBlocks{Blocks: []domain.SieveBlock{b}}}
 	handles := sd.collectHandles()
 	for _, id := range []string{"element-prose", "element-ref"} {
 		if handles[id] {

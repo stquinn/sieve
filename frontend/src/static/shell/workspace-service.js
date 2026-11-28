@@ -159,7 +159,7 @@ export class WorkspaceService {
    * Persists one tab's scroll offset (frame frozen: {type:'session-scroll', id,
    * scroll}). Fire-and-forget and unanswered. It names its tab because the
    * workspace channel is not bound to a document.
-   * @param {string} tabId @param {number} scroll  the pixel offset from the top
+   * @param {string} tabId @param {number} scroll  the position, in the measure of the surface that reported it
    */
   persistScroll(tabId, scroll) {
     if (!tabId) return

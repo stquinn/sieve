@@ -26,6 +26,7 @@ type ServiceProvider struct {
 	Library     services.LibraryService
 	Documents   *services.DocumentService
 	Containers  *services.BlockContainerService
+	Chats       *services.ChatService
 	Nodes       *editor.Router
 	Search      domain.SearchService // what every consumer that finds things is handed: the Router, as the port
 	Assets      *services.AssetService
@@ -63,6 +64,8 @@ type ServiceProvider struct {
 	InkTranscripts *ink.PageTranscripts
 	// InkNamer names the synced notes.
 	InkNamer *ink.NoteNamer
+	// ChatNamer names the chats.
+	ChatNamer *editor.ChatNamer
 }
 
 // InkRadio is the radio Ink dials: the TCP companion at settings.TCP when one is set, otherwise
@@ -75,13 +78,14 @@ func (s *ServiceProvider) InkRadio(settings domain.InkSettings) radio.Radio {
 }
 
 // RegisterNodeSources registers with the Router, in offer order, every source it federates: the
-// documents, the notebooks, every other block container, and the Live view. Registering a source
+// documents, the chats, the notebooks, every other block container, and the Live view. Registering a source
 // is the one line that makes a container kind addressable and found. The documents come first so
 // that a document's address is read from the store once; the notebooks precede the block source,
 // which resolves any container and offers none.
 func (s *ServiceProvider) RegisterNodeSources() {
 	blocks := editor.NewBlockSource(s.Containers)
 	s.Nodes.Register(editor.NewNotesSource(s.Documents))
+	s.Nodes.Register(editor.NewChatSource(s.Chats))
 	s.Nodes.Register(ink.NewNotebooks(s.Ink, blocks))
 	s.Nodes.Register(blocks)
 	s.Nodes.Register(s.Ink.LiveView())
@@ -169,6 +173,7 @@ var (
 	_ block.LinkPreviewPort            = (*services.LinkPreviewService)(nil)
 	_ block.PlantumlPort               = (*services.PlantumlService)(nil)
 	_ services.ContainableKinds        = block.Registry{}
+	_ services.ChatFormat              = (*block.ChatCodec)(nil)
 	_ services.ContainerChangeListener = (*editor.EditorService)(nil)
 	_ editor.NodeSource                = (*ink.LiveView)(nil)
 	_ editor.NodeSource                = (*ink.Notebooks)(nil)
@@ -181,6 +186,7 @@ var (
 	_ mcp.AnswerWriter                 = (*editor.EditorService)(nil)
 	_ mcp.AnswerWriter                 = (*command.Registry)(nil)
 	_ ink.NoteDescriber                = (*ai.AIService)(nil)
+	_ editor.ChatDescriber             = (*ai.AIService)(nil)
 	_ ink.PageTranscriber              = (*ai.AIService)(nil)
 	_ ink.DiagramDrawer                = (*services.PlantumlService)(nil)
 )
@@ -197,6 +203,11 @@ func (s *ServiceProvider) Init(store store.Store, storePath string, themesFS fs.
 	s.Containers, err = services.NewBlockContainerService(store, block.GlobalRegistry())
 	if err != nil {
 		logger.Error("block containers init failed", "err", err)
+		return
+	}
+	s.Chats, err = services.NewChatService(store, block.NewChatCodec(block.GlobalRegistry()))
+	if err != nil {
+		logger.Error("chats init failed", "err", err)
 		return
 	}
 	// The Router: address → NodeDescriptor, and the one search. MCP get_by_uri
@@ -226,7 +237,7 @@ func (s *ServiceProvider) Init(store store.Store, storePath string, themesFS fs.
 	// interfaces the MCP package declares for itself — so get_by_uri dereferences
 	// addresses through the same registry the @ picker offers them from, and
 	// search finds through the same search.
-	s.MCP = mcp.NewServer(s.Documents, s.Nodes, s.Search, s.LinkPreview)
+	s.MCP = mcp.NewServer(s.Documents, s.Assets, s.Nodes, s.Search, s.LinkPreview)
 	s.AI.SetMCPEndpoint(s.MCP)
 	s.Commands = command.NewRegistry()
 	s.Plantuml = services.NewPlantumlService(s.State)
@@ -242,6 +253,7 @@ func (s *ServiceProvider) Init(store store.Store, storePath string, themesFS fs.
 	autosave := time.Duration(settings.AutosaveDebounce) * time.Second
 	s.Editor = editor.NewEditorService(s.Documents, block.NewDocumentCodec(block.GlobalRegistry()), autosave)
 	s.Editor.SetServices(s.BlockServices())
+	s.Editor.SetChats(s.Chats)
 	s.Editor.SetContainers(s.Containers)
 	s.Editor.SetNodes(s.Nodes)
 	s.Containers.SetChangeListener(s.Editor)
@@ -287,6 +299,10 @@ func (s *ServiceProvider) Init(store store.Store, storePath string, themesFS fs.
 	s.Editor.SetAI(s.AI)
 	s.Commands.SetEngine(s.Engine)
 	s.InkNamer = ink.NewNoteNamer(s.Ink, s.InkImages, s.AI, s.Engine)
+	// The chat namer hears a chat's jobs end from the Editor and tells the Editor a chat's new
+	// name, which tells a client holding the chat open and whoever hears chats change.
+	s.ChatNamer = editor.NewChatNamer(s.Chats, s.AI, s.Engine, s.Jobs, s.State, s.Editor)
+	s.Editor.SetChatAnsweredListener(s.ChatNamer)
 	s.InkTranscripts = ink.NewPageTranscripts(s.Ink, s.InkImages, s.AI, s.Plantuml, block.NewDocumentCodec(block.GlobalRegistry()), s.Engine)
 	for _, cmd := range s.CommandSet() {
 		s.Commands.Register(cmd)
@@ -303,8 +319,8 @@ func (s *ServiceProvider) Init(store store.Store, storePath string, themesFS fs.
 
 	block.RegisterProcessor(processors.NewAIBlockProcessor(svc))
 	s.MCP.OpenAnswers(block.GlobalRegistry(), map[domain.AnswerHolder]mcp.AnswerWriter{
-		domain.HeldInDocument: s.Editor,
-		domain.HeldByCommand:  s.Commands,
+		domain.HeldInContainer: s.Editor,
+		domain.HeldByCommand:   s.Commands,
 	})
 }
 

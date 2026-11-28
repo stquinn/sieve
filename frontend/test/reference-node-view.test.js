@@ -72,12 +72,20 @@ describe('reference NodeView — schema and policy', () => {
     // mistaken for the reference's own. There is no `src` either — `uri` is the
     // one address attr, whether this block points or holds.
     expect(Object.keys(adapter.attrs).sort())
-      .toEqual(['cache', 'error', 'uri'])
+      .toEqual(['cache', 'displayAs', 'error', 'rel', 'uri'])
     expect(Object.keys(adapter.attrs)).not.toContain('kind')
     // A wire envelope carrying the reserved name is ignored, and the cache rides
     // the data-* costume as JSON (the ai-block attachments pattern).
     expect(adapter.parseAttrs({ kind: 'reference', cache: { mime: 'text/yaml', bytes: '12' } }))
-      .toEqual({ uri: '', cache: '{"mime":"text/yaml","bytes":"12"}', error: '' })
+      .toEqual({ uri: '', cache: '{"mime":"text/yaml","bytes":"12"}', error: '', rel: '', displayAs: '' })
+  })
+
+  it('carries a quote\'s role and how it is drawn, so the block it draws is the quote', () => {
+    const attrs = { uri: 'sieve://9f2b/x1', rel: 'target', displayAs: 'quote', cache: { quote: 'the scanner trims' } }
+    expect(adapter.parseAttrs(attrs))
+      .toEqual({ uri: 'sieve://9f2b/x1', cache: '{"quote":"the scanner trims"}', error: '', rel: 'target', displayAs: 'quote' })
+    const view = mount(attrs, 'doc-1')
+    expect(view.dom.querySelector('.reference-block__quote')?.textContent).toBe('the scanner trims')
   })
 
   it('copies as its coordinate, so a pasted chip can become a chip again — held or not', () => {
@@ -121,10 +129,14 @@ describe('reference NodeView — double click opens where it lives', () => {
     document.body.innerHTML = ''
   })
 
-  it('POINTS: hands the opaque coordinate to the workspace, and fires no asset intent', () => {
-    mount({ uri: 'sieve://9f2b', cache: { title: 'Auth Design' } }, 'doc-1')
-    dblclickChip()
-    expect(openAddress.mock.calls).toEqual([['sieve://9f2b']])
+  it.each([
+    ['a reference: the coordinate, seeking nothing', { uri: 'sieve://9f2b', cache: { title: 'Auth Design' } }, '.sieve-reference-chip', [['sieve://9f2b', undefined]]],
+    ['a quote: the coordinate, and the quoted text it seeks there', { uri: 'sieve://9f2b/x1', displayAs: 'quote', cache: { quote: 'TrimSpace erases the signal.' } }, '.reference-block__quote', [['sieve://9f2b/x1', 'TrimSpace erases the signal.']]],
+  ])('POINTS: hands the workspace %s, and fires no asset intent', (_name, attrs, drawn, calls) => {
+    mount(attrs, 'doc-1')
+    const el = /** @type {HTMLElement} */ (document.querySelector(drawn))
+    el.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true }))
+    expect(openAddress.mock.calls).toEqual(calls)
     expect(intents).toEqual([])
   })
 
@@ -162,7 +174,7 @@ describe('reference NodeView — double click opens where it lives', () => {
     expect(cites[0]).toEqual({ type: 'header', label: 'Reference' })
     expect(cites.map((/** @type {any} */ i) => i.label)).toEqual(['Reference', 'Open Reference', 'Copy Address'])
     cites[1].action()
-    expect(openAddress.mock.calls).toEqual([['sieve://9f2b']])
+    expect(openAddress.mock.calls).toEqual([['sieve://9f2b', undefined]])
 
     const holds = adapter.buildContextMenuItems({ node: nodeOf({ uri: 'sieve://doc-1/swagger.yml', cache: { mime: 'text/yaml' } }), getEditor: () => ({ uuid: 'doc-1' }) })
     expect(holds.map((/** @type {any} */ i) => i.label)).toEqual(['Reference', 'Show in Files', 'Copy Filename'])

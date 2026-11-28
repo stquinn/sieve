@@ -1,7 +1,22 @@
 // @ts-check
 // The Ask panel as a PERMANENT Workspace child, constructed ONCE and persisting
 // across tab/editor switches, so it is NOT owned by any editor. It REFLECTS the
-// active editor by subscribing to workspace.onSelectionUpdate.
+// active editor by subscribing to workspace.onSelectionUpdate, and reaches it
+// only through what every lens offers: its selection context, its published
+// capabilities, and `askAi` on a lens that publishes `ask`.
+//
+// It is one instance with one presentation, and two ways to be pinned open. The
+// user's pin (the persisted View-menu toggle) is the user's alone. PINNED FOR a
+// container (`pinFor`, which the workspace sets from the active tab's mounting),
+// it is held open as the user's pin holds it, with the same look, handle and
+// height, nothing the user does dismisses it, and its draft is that
+// container's: each such container keeps its own unsent draft, in memory until
+// its tab closes. Released, it is again whatever the user had made it. Otherwise
+// its draft is the workspace's one.
+//
+// Up in an empty draft recalls what the editor an ask would be put to says was
+// asked of it before (`questionsAsked`, read at the moment of the key), so the
+// panel remembers nothing of what it sent.
 //
 // The message is written in a COMPOSER MOUNT — a lens over an in-memory draft —
 // so what leaves here on send is the list of blocks that were written, not a
@@ -15,6 +30,7 @@ import { ComposerAttachments } from './composer-attachments.js'
 import { ComposerHints } from './composer-hints.js'
 import { ComposerMount } from './composer-mount.js'
 import { TargetChips } from './target-chips.js'
+import { QuestionList } from '../renderers/question-list.js'
 
 export class AskPanel {
   /** What the footer says while no mount can hold an answer, so only commands run. */
@@ -49,6 +65,10 @@ export class AskPanel {
   #panel = null
   /** @type {boolean} pin state — one persisted boolean (ShowAskPanel), mirrored here */
   #pinned = false
+  /** @type {string} the container the panel is pinned open for; '' while none is */
+  #pinnedFor = ''
+  /** @type {boolean} whether the panel stood open, unpinned, before it was pinned for a container */
+  #openBeforePin = false
   /** @type {ReturnType<typeof setTimeout>|null} debounce for the pulled-context repaint */
   #labelTimeout = null
   /** @type {ReturnType<typeof setTimeout>|null} debounce for the command-cue repaint */
@@ -104,6 +124,7 @@ export class AskPanel {
     // The command cue comes last, so it sits against Send: it is what Send is
     // about to do.
     this.#cue = new CommandCue(this.#panel.querySelector('.ask-popup__footer'))
+    this.#composer.recallFrom(() => this.#askedBefore())
     this.#wireComposer()
     this.#wireDom()
     this.#wirePinToggle()
@@ -163,20 +184,75 @@ export class AskPanel {
     setTimeout(() => composer.focus(), 50)
   }
 
-  /** Jumps back to the editor, hiding the panel if unpinned and restoring the
-   *  caret to where we were on jump-in. A jump-out NEVER touches the persisted
-   *  pin state. */
+  /** Jumps back to the editor, hiding the panel unless it is held open,
+   *  and restoring the caret to where we were on jump-in. A jump-out NEVER
+   *  touches the persisted pin state. */
   close() {
     if (!this.#panel) return
-    if (!this.#pinned) this.#panel.classList.remove('is-open')
+    if (!this.#heldOpen()) this.#panel.classList.remove('is-open')
     this.#ws.setPosition(this.#focusReturn)
+  }
+
+  /**
+   * Pins the panel open for `container`, writing that container's draft, or,
+   * given null or '', releases it to the workspace's draft and to what it was
+   * before it was pinned for a container: open while the user pins it, else
+   * open or closed as it stood. Pinning shows it as the user's pin does, brings
+   * the container's draft up and gives it the caret. The user's pin is never
+   * written. Every draft left is kept. Idempotent.
+   * @param {string|null} container the uuid of the container the panel is pinned
+   *   open for; null or '' releases it
+   */
+  pinFor(container) {
+    const want = container || ''
+    if (!this.#panel || !this.#composer || want === this.#pinnedFor) return
+    if (!this.#pinnedFor) this.#openBeforePin = !this.#pinned && this.#panel.classList.contains('is-open')
+    this.#pinnedFor = want
+    this.#present()
+    this.#composer.setPlace(want)
+    if (!want) {
+      if (this.#pinned || this.#openBeforePin) this.#openComposer()
+      else this.#panel.classList.remove('is-open')
+      this.#reconcileChips()
+      return
+    }
+    this.#panel.classList.add('is-open')
+    this.#openComposer()
+    this.#reconcileChips()
+    this.#focusReturn = null
+    this.#lastContext = this.#ws.getSelectionContext()
+    this.#renderSubject()
+    const composer = this.#composer
+    setTimeout(() => composer.focus(), 50)
+  }
+
+  /**
+   * Drops the draft written for `container`: its tab has closed, or it is gone.
+   * @param {string} container
+   */
+  dropDraft(container) {
+    if (!this.#composer || !container) return
+    this.#composer.forget(container)
+    if (container !== this.#pinnedFor) return
+    if (this.#panel && this.#panel.classList.contains('is-open')) this.#openComposer()
+    this.#reconcileChips()
+  }
+
+  /** @returns {boolean} whether the panel is held open: the user pins it, or it is pinned for a container */
+  #heldOpen() { return this.#pinned || !!this.#pinnedFor }
+
+  /** Marks the panel `is-pinned` while it is held open, the class the pinned
+   *  presentation is styled by whichever pin holds it. */
+  #present() {
+    if (this.#panel) this.#panel.classList.toggle('is-pinned', this.#heldOpen())
   }
 
   /** Dismisses the panel. "View Ask panel on/off" and "pin" are ONE persisted
    *  boolean, so when pinned ON, ✕ untoggles it through the same endpoint the View
-   *  menu uses; a transient ambient open just hands focus back and hides. */
+   *  menu uses; a transient ambient open just hands focus back and hides. A panel
+   *  pinned for a container is not dismissed: it hands focus back and stays. */
   #dismiss() {
-    if (this.#pinned && window.htmx) {
+    if (this.#pinned && !this.#pinnedFor && window.htmx) {
       window.htmx.ajax('POST', '/api/session/toggle/askpanel', { swap: 'none' })
     }
     this.close()
@@ -198,6 +274,29 @@ export class AskPanel {
   explainActive() {
     const ed = this.#ws.activeBlockEditor()
     if (ed) ed.askAi({ type: 'explain', context: ed.getSelectionContext() })
+  }
+
+  /**
+   * Puts a quote of `text`, from the block `blockId` of `container`, into the
+   * draft: one reference to it, drawn as a quote and carrying the text, after the
+   * block the caret is in. Asked when a lens says the reader quoted. Blank text,
+   * or no container, is not a quote. The panel opens with the caret in the draft;
+   * what the target chip shows, and so what a send acts on, is not changed by
+   * the quote, and a panel the quote opens shows the selection as an open does.
+   * @param {string} container the uuid of the container the quoted block is in
+   * @param {string} blockId the quoted block's id
+   * @param {string} text what was quoted
+   */
+  insertQuote(container, blockId, text) {
+    if (!this.#panel || !this.#composer) return
+    const element = QuestionList.quotation(container, blockId, text)
+    if (!element) return
+    const opening = !this.#panel.classList.contains('is-open')
+    this.#panel.classList.add('is-open')
+    this.#openComposer()
+    this.#composer.insert(element)
+    if (opening) this.#refreshLabel()
+    this.#composer.focus()
   }
 
   /** @returns {ComposerMount|null} the draft socket this panel writes in */
@@ -308,12 +407,13 @@ export class AskPanel {
     if (pinned === this.#pinned) return
     this.#pinned = pinned
     if (!this.#panel) return
+    this.#present()
     if (pinned) {
       this.#panel.classList.add('is-open')
       // Pinning ON makes the panel visible without a jump-in: mount the draft
       // so the socket is never empty, without stealing focus.
       this.#openComposer()
-    } else if (!this.#composer || !this.#composer.hasFocus()) {
+    } else if (!this.#pinnedFor && (!this.#composer || !this.#composer.hasFocus())) {
       this.#panel.classList.remove('is-open')
     }
   }
@@ -383,8 +483,8 @@ export class AskPanel {
     }
 
     // An ask is answered in the container asked from, so with no mount that can
-    // hold an answer the draft stays as written and the cue has said why.
-    const ed = this.#ws.activeBlockEditor()
+    // be asked the draft stays as written and the cue has said why.
+    const ed = this.#ws.activeAskableLens()
     if (!ed) return
     const context = this.#lastContext || ed.getSelectionContext()
     // NO separate attachments: the harvested list already carries them as the
@@ -481,14 +581,18 @@ export class AskPanel {
   }
 
   /** Retires the draft after a send: a new container, a new lens, and no undo
-   *  history reaching back into a message already sent. The picker's abandonment
-   *  record dies with the lens, so a document created mid-session is findable
-   *  again on the next message. */
+   *  history reaching back into a message already sent.
+   *  The picker's abandonment record dies with the lens, so a document created
+   *  mid-session is findable again on the next message. A panel pinned for a
+   *  container keeps the caret in the next draft. */
   #clearComposer() {
-    if (this.#composer) this.#composer.reset()
+    if (this.#composer) {
+      this.#composer.reset()
+      if (this.#pinnedFor) this.#composer.focus()
+    }
     this.#reconcileChips()
     this.#paintCue()
-    if (this.#panel && !this.#pinned) this.#panel.classList.remove('is-open')
+    if (this.#panel && !this.#heldOpen()) this.#panel.classList.remove('is-open')
     this.#focusReturn = null
     // The target chip stays — the selection outlives the message.
     this.#renderSubject()
@@ -505,10 +609,18 @@ export class AskPanel {
     if (this.#canAsk() !== this.#cueCanAsk) this.#refreshCue()
   }
 
-  /** @returns {boolean} whether the active mount can hold an answer: its lens
-   *  mints blocks in its container. */
+  /** @returns {ReadonlyArray<ReadonlyArray<import('../renderers/question-list.js').QuestionElement>>}
+   *  what the editor an ask would be put to says was asked of it, oldest first;
+   *  nothing when there is no such editor or it says nothing of it */
+  #askedBefore() {
+    const lens = /** @type {any} */ (this.#ws.activeAskableLens())
+    return lens && typeof lens.questionsAsked === 'function' ? lens.questionsAsked() : []
+  }
+
+  /** @returns {boolean} whether the active mount can be asked: its lens
+   *  publishes `ask`. */
   #canAsk() {
-    return !!this.#ws.activeBlockEditor()
+    return !!this.#ws.activeAskableLens()
   }
 
   /**

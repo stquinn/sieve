@@ -13,7 +13,7 @@ func TestCollectHandles_IndexesEveryHandle(t *testing.T) {
 		{ID: "pr-b", Kind: KindProse},
 		{ID: "co-1", Kind: "code"},
 	}
-	sd := ShadowDocument{Blocks: doc}
+	sd := ShadowDocument{LiveBlocks: LiveBlocks{Blocks: doc}}
 	got := sd.collectHandles()
 	for _, h := range []string{"pr-a", "pr-x", "pr-b", "co-1"} {
 		if !got[h] {

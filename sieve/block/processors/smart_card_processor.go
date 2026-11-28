@@ -157,7 +157,7 @@ type smartCardFetch struct {
 	imageRef string
 }
 
-func (p *SmartCardProcessor) BuildContext(blk domain.SieveBlock, doc block.DocView, _ map[string]bool) block.AIContext {
+func (p *SmartCardProcessor) BuildContext(blk domain.SieveBlock, doc block.ContainerView, _ map[string]bool) block.AIContext {
 	href, _ := blk.Attrs["href"].(string)
 	if href == "" {
 		return block.AIContext{}
@@ -243,12 +243,7 @@ func (p *SmartCardProcessor) downloadImage(uuid, blockID, imageURL string) (stri
 		return "", fmt.Errorf("read image body: %w", err)
 	}
 
-	cat := domain.WorkingCopy
-	if d, err := p.svc.Documents.LoadByUUID(uuid); err == nil && d.Kind() == domain.KindNote {
-		cat = domain.LibraryCategory
-	}
-
-	asset, err := p.svc.Assets.Save(cat, uuid, blockID+"-img", data)
+	asset, err := p.svc.Assets.Save(uuid, blockID+"-img", data)
 	if err != nil {
 		return "", fmt.Errorf("save image asset: %w", err)
 	}

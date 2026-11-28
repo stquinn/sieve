@@ -14,7 +14,7 @@ import { DigitalNoteLens } from '../src/static/lens/ink/digital-note-lens.js'
 import { PageSurface } from '../src/static/lens/ink/page-surface.js'
 import { TranscriptSurface } from '../src/static/lens/ink/transcript-surface.js'
 import { SurfaceIntent } from '../src/static/lens/abstract-surface.js'
-import { ActionStatus } from '../src/static/lens/ink/action-status.js'
+import { ActionStatus } from '../src/static/renderers/action-status.js'
 import { ImageClipboard } from '../src/static/renderers/copy-image.js'
 import { InkRenderer } from '../src/static/renderers/ink-renderer.js'
 import { InkFeed, InkOpening, InkTranscriptState, InkRefusal } from '../src/static/contract/ink-container-provider.js'
@@ -1414,7 +1414,7 @@ describe('DigitalNoteLens', () => {
 
   it('is read-only by construction', async () => {
     const { lens } = await presented()
-    expect(lens.getCapabilities()).toEqual({ markdown: false, mentions: false, commands: false, blocks: false })
+    expect(lens.getCapabilities()).toEqual({ markdown: false, mentions: false, commands: false, blocks: false, ask: false })
     expect(await lens.setMode('markdown')).toBe(false)
     expect(await lens.setPresenting(true)).toBe(false)
     await lens.flushSave()
@@ -1446,7 +1446,7 @@ describe('DigitalNoteLens', () => {
     /** @param {HTMLElement} root @returns {string[]} the kinds of the blocks drawn */
     const drawn = (root) => [...root.querySelectorAll('.ink-transcript__blocks > [data-kind]')].map((el) => String(el.getAttribute('data-kind')))
     /** @param {HTMLElement} root @returns {string} */
-    const working = (root) => String(root.querySelector('.ink-transcript__bar .ink-page__status')?.textContent || '')
+    const working = (root) => String(root.querySelector('.ink-transcript__bar .action-status')?.textContent || '')
     /** @param {HTMLElement} bar */
     const toggle = (bar) => /** @type {HTMLButtonElement} */ (item(bar, 'tb-toggle-mode-btn'))
 

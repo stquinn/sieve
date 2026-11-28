@@ -24,6 +24,9 @@ func (c *TodoCommand) Build(text string, ctx command.Context) (command.Job, erro
 	if err := c.available(); err != nil {
 		return command.Job{}, err
 	}
+	if err := c.readsDocument(c.Name(), ctx); err != nil {
+		return command.Job{}, err
+	}
 	prompt := "Scan the provided text or document and extract all open TODOs, action items, tasks, and key decisions. Format as a clean Markdown checklist using '- [ ]'. If no explicit tasks exist, infer 3-5 logical next action steps. Keep it direct with no preamble."
 	if strings.TrimSpace(text) != "" {
 		prompt += "\n\nUser request filter: " + text

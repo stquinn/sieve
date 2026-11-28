@@ -8,6 +8,7 @@ import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { describe, it, expect } from 'vitest'
 import { QuestionList, QuestionRel } from '../src/static/renderers/question-list.js'
+import { ReferenceRenderer } from '../src/static/renderers/reference-renderer.js'
 
 const DOC = '0197b2aa-1111-7888-8999-aaaabbbbcccc'
 const LEAF = '0197b2aa-3333-7888-8999-aaaabbbbcccc'
@@ -58,6 +59,26 @@ describe('QuestionList — what a gesture mints', () => {
     ])
     expect(new QuestionList(DOC).ask('   ').elements).toEqual([])
     expect(new QuestionList(DOC).ask(undefined).elements).toEqual([])
+  })
+
+  // A quote is a reference: the absolute address of what was quoted, the target
+  // stamp, drawn as a quote, and the quoted text in its cache.
+  it.each([
+    ['a block', LEAF, 'sieve://' + DOC + '/' + LEAF],
+    ['the container, when no block is named', null, 'sieve://' + DOC],
+  ])('a quotation of %s is a target reference drawn as a quote', (_name, leaf, uri) => {
+    expect(QuestionList.quotation(DOC, leaf, '  the scanner trims  ')).toEqual({
+      kind: 'reference',
+      attrs: { uri, rel: QuestionRel.TARGET, displayAs: ReferenceRenderer.DisplayAs.QUOTE, cache: { [ReferenceRenderer.QUOTE_KEY]: 'the scanner trims' } },
+    })
+  })
+
+  it.each([
+    ['blank text', DOC, '  '],
+    ['no text', DOC, null],
+    ['no container', '', 'words'],
+  ])('%s is no quotation', (_name, container, text) => {
+    expect(QuestionList.quotation(container, LEAF, text)).toBeNull()
   })
 
   // An attachment's title is the FACE — what was taken from the target — so it
@@ -242,5 +263,20 @@ describe('QuestionList — the fold', () => {
     const folded = QuestionList.fold(list, DOC)
     expect(folded.attachments[0]).toBe(list[0])
     expect(folded.body[0]).toBe(list[1])
+  })
+
+  // What a reader sees of a question: its body, and the references in it that
+  // declare how they are drawn, in the order they were written. The fold is
+  // untouched: a quote is a target.
+  it('draws the body and every quote in authored order, folding a quote as the target it is', () => {
+    const quote = QuestionList.quotation(DOC, LEAF, 'the scanner trims')
+    const again = QuestionList.quotation(DOC, 'b2', 'the second')
+    const list = [ref('sieve://' + DOC, 'target'), prose('why?'), quote, prose('and?'), again, ref('sieve://' + OTHER, 'attach')]
+    expect(QuestionList.drawn(list, DOC)).toEqual([list[1], quote, list[3], again])
+    expect(slots(list).targets).toEqual([list[0], quote, again])
+  })
+
+  it('a scalar question draws as its one prose element', () => {
+    expect(QuestionList.drawn('why?', DOC)).toEqual([prose('why?')])
   })
 })

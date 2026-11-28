@@ -13,7 +13,7 @@
 import { readdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import jsyaml from 'js-yaml'
-import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest'
 import MarkdownIt from 'markdown-it'
 import { AiBlockRenderer } from '../src/static/renderers/ai-block-renderer.js'
 import { QuestionListView } from '../src/static/renderers/question-list-view.js'
@@ -430,6 +430,21 @@ describe('the ai-block question — what it draws and what it leaves alone', () 
     } finally {
       cascade.remove()
     }
+  })
+
+  it.each([
+    ['a reference: its address alone', { uri: 'sieve://' + SELF + '/b1', cache: { title: 'Elsewhere' } }, '.sieve-reference-chip', [['sieve://' + SELF + '/b1']]],
+    ['a quote: its address and the text it seeks there', { uri: 'sieve://' + SELF + '/b1', displayAs: 'quote', cache: { quote: 'the quoted words' } }, '.reference-block__quote', [['sieve://' + SELF + '/b1', 'the quoted words']]],
+  ])('an element that asks to open is passed to the view\'s open as %s, naming no kind', (_name, attrs, drawn, calls) => {
+    const open = vi.fn()
+    const el = document.createElement('div')
+    document.body.appendChild(el)
+    const view = new QuestionListView(SELF, { open })
+    view.fill(el, [{ kind: 'reference', attrs }])
+    const face = /** @type {HTMLElement} */ (el.querySelector(drawn))
+    face.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true }))
+    expect(open.mock.calls).toEqual(calls)
+    view.destroy()
   })
 
   it('an HTML-shaped element renders as inert text — no node is built from it', () => {

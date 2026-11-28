@@ -66,7 +66,7 @@ func (d deletionReconciler) reconcile(w http.ResponseWriter, deleted ...string) 
 	fmt.Fprint(w, `</div>`)
 
 	activeTab := session.Tabs[session.ActiveIdx]
-	if err := d.tmpl.ExecuteTemplate(w, "editor.html", editorSwap{UUID: activeTab.ID, Mode: activeTab.Mode}); err != nil {
+	if err := d.tmpl.ExecuteTemplate(w, "editor.html", editorSwap{UUID: activeTab.ID, Mode: activeTab.Mode, Kind: activeTab.ContainerKind()}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

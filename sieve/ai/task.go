@@ -160,6 +160,46 @@ func (d ThreadData) Text() string {
 		d.ContentType, d.Content, d.History, d.Action)
 }
 
+// ChatData is the data of the chat task: the conversation so far, what the
+// question points at, and the question to answer now.
+type ChatData struct {
+	// Turns are the exchanges before this one, oldest first.
+	Turns []ChatTurn
+	// About is the material the question points at, "" when it points at none.
+	About string
+	// Question is the exchange being answered, as it is shown with no answer.
+	Question string
+}
+
+// ChatTurn is one earlier exchange of a chat: its absolute address and its
+// text, question and answer.
+type ChatTurn struct {
+	Address string
+	Text    string
+}
+
+// Text prints THREAD, ABOUT and QUESTION, in that order, each only when it has
+// content. Turn n is printed under the line "===== TURN n =====", then its
+// "ADDRESS:" line, then its text; nothing printed for a turn depends on a later
+// one.
+func (d ChatData) Text() string {
+	var sections []string
+	if len(d.Turns) > 0 {
+		turns := make([]string, len(d.Turns))
+		for i, turn := range d.Turns {
+			turns[i] = fmt.Sprintf("===== TURN %d =====\nADDRESS: %s\n%s", i+1, turn.Address, turn.Text)
+		}
+		sections = append(sections, "THREAD:\n"+strings.Join(turns, "\n\n"))
+	}
+	if strings.TrimSpace(d.About) != "" {
+		sections = append(sections, "ABOUT:\n"+d.About)
+	}
+	if strings.TrimSpace(d.Question) != "" {
+		sections = append(sections, "QUESTION:\n"+d.Question)
+	}
+	return strings.Join(sections, "\n\n---\n---\n\n")
+}
+
 // BtwData is the data of the btw task: the question, the selection it may be
 // about, and the open document's title and summary as background.
 type BtwData struct {
@@ -202,6 +242,28 @@ func (d NoteMetaData) Text() string {
 	}
 	fmt.Fprintf(&b, "\n\nCategories: %s", categories)
 	return b.String()
+}
+
+// ChatMetaData is the data of the chat-meta task: a chat's answered exchanges,
+// oldest first, each its question and answer as the chat task's thread shows a
+// turn, and the categories to choose from.
+type ChatMetaData struct {
+	Turns      []string
+	Categories []string
+}
+
+// Text prints THREAD, each turn under the line "===== TURN n =====", then the
+// categories offered.
+func (d ChatMetaData) Text() string {
+	turns := make([]string, len(d.Turns))
+	for i, turn := range d.Turns {
+		turns[i] = fmt.Sprintf("===== TURN %d =====\n%s", i+1, turn)
+	}
+	categories := strings.Join(d.Categories, ", ")
+	if categories == "" {
+		categories = "(none)"
+	}
+	return "THREAD:\n" + strings.Join(turns, "\n\n") + "\n\n---\n---\n\nCategories: " + categories
 }
 
 // PageTranscriptData is the data of the page-transcript task: the file name of

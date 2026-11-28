@@ -2,10 +2,14 @@
 // ReferenceRenderer: the 'reference' kind's look-and-feel, and there is
 // deliberately very little of it — the block IS a reference chip, so this class
 // composes ReferenceChip on a shrink-wrapping line and adds the chevron that
-// reveals `summary`. No card shell, no header bar, no toolbar.
+// reveals `summary`. No card shell, no header bar, no toolbar. A reference
+// whose `displayAs` is a quote is drawn instead as a blockquote of the text it
+// quotes, with a quiet line saying where that is from; it is the same reference,
+// and it opens the same way.
 //
 // THE ONE GESTURE IT OWNS: DOUBLE click, fanned out as an INTENT (`onOpen`)
-// carrying the block's target. Single click is NOT handled here — a block sits
+// carrying the block's target: where it points and, for a quote, the text it
+// quoted, which is what the opener is looking for there. Single click is NOT handled here — a block sits
 // in the editing flow, so placing the caret is the shared policy's job.
 
 import { BlockRenderer } from './block-renderer.js'
@@ -26,6 +30,8 @@ import { registerBlockRenderer } from './block-kinds.js'
  * @property {string} [bytes]    a held file's size, as a STRING (see the processor for why)
  * @property {string} [mime]     what this block points at or holds; non-sieve/* ⇔ held
  * @property {string} [cachedAt] when this face was taken from the target
+ * @property {string} [quote]    the text a reader quoted from the target, written
+ *   by whoever minted the quote; no resolve touches it
  */
 
 /**
@@ -42,6 +48,9 @@ import { registerBlockRenderer } from './block-kinds.js'
  *   reference belongs to, and falls back to the address when it declares
  *   neither. It never alters permissions or what the reference IS; this block's
  *   own rendering does not read it.
+ * @property {string} [displayAs] how the block is DRAWN, never what it is:
+ *   `ReferenceRenderer.DisplayAs.QUOTE` draws a blockquote of the cached quote
+ *   in place of the chip; absent or any other value draws the chip
  * @property {string} [status]
  * @property {string} [error]
  * @property {string|null} [createdAt]
@@ -54,11 +63,24 @@ import { registerBlockRenderer } from './block-kinds.js'
  * @property {string} title   what to call it
  * @property {boolean} held   true when the face carries `mime` — a file this
  *   block itself holds, opened by revealing it rather than navigating to it
+ * @property {string} [seek]  the text the opener is looking for at `uri`: the
+ *   text a reference drawn as a quote quotes (`quoteOf`); absent on any other
+ *   reference. A hint to whatever brings the address into view, never part of
+ *   the address
  */
 
 export class ReferenceRenderer extends BlockRenderer {
   static styles = referenceStyles
   static rootClass = 'reference-block'
+
+  /** The values `displayAs` may take. */
+  static DisplayAs = Object.freeze({ QUOTE: 'quote' })
+
+  /** The cache key a quote's text is held under. */
+  static QUOTE_KEY = 'quote'
+
+  /** The tooltip of a quote whose target has no cached title. */
+  static #QUOTE_SOURCE = 'Quoted'
 
   /** Disclosure glyphs. A GLYPH SWAP, never a CSS transform. */
   static #CHEVRON = Object.freeze({ COLLAPSED: '▸', EXPANDED: '▾' })
@@ -80,7 +102,11 @@ export class ReferenceRenderer extends BlockRenderer {
     const p = payload || {}
     const uri = (p.uri || '').trim()
     if (!uri) return null
-    return { uri: uri, title: ReferenceRenderer.labelFor(p), held: ReferenceRenderer.#isHeld(p) }
+    /** @type {ReferenceTarget} */
+    const target = { uri: uri, title: ReferenceRenderer.labelFor(p), held: ReferenceRenderer.#isHeld(p) }
+    const seek = ReferenceRenderer.quoteOf(p)
+    if (seek) target.seek = seek
+    return target
   }
 
   /**
@@ -91,6 +117,18 @@ export class ReferenceRenderer extends BlockRenderer {
    */
   static faceOf(payload) {
     return (payload || {}).cache || {}
+  }
+
+  /**
+   * The text a reference drawn as a quote quotes: its cached quote when it is
+   * drawn as one, else ''.
+   * @param {ReferencePayload} payload
+   * @returns {string}
+   */
+  static quoteOf(payload) {
+    const p = payload || {}
+    if (p.displayAs !== ReferenceRenderer.DisplayAs.QUOTE) return ''
+    return String(ReferenceRenderer.faceOf(p)[ReferenceRenderer.QUOTE_KEY] || '').trim()
   }
 
   /**
@@ -230,6 +268,15 @@ export class ReferenceRenderer extends BlockRenderer {
     const line = this.#line
     const summaryEl = this.#summaryEl
     if (!line || !summaryEl) return
+    const root = this.root
+    const quote = ReferenceRenderer.quoteOf(payload)
+    if (root) root.classList.toggle('reference-block--quote', !!quote)
+    if (quote) {
+      this.#drawQuote(line, payload, quote)
+      summaryEl.textContent = ''
+      summaryEl.classList.remove('reference-block__summary--shown')
+      return
+    }
 
     const held = ReferenceRenderer.#isHeld(payload)
     const missing = ReferenceRenderer.#isMissing(payload)
@@ -252,11 +299,26 @@ export class ReferenceRenderer extends BlockRenderer {
     summaryEl.textContent = summary
     summaryEl.classList.toggle('reference-block__summary--shown', this.#expanded && !!summary)
 
-    const root = this.root
     if (root) {
       const pending = StatusBadge.classify(payload.status, payload.createdAt, payload.id) === 'pending'
       root.classList.toggle('reference-block--pending', pending)
     }
+  }
+
+  /**
+   * Draws the block as the quote it is: the quoted text as a blockquote, plain
+   * text and never markdown. No line says it is a quote: its look does, and
+   * where it is from is its tooltip.
+   * @param {HTMLElement} line @param {ReferencePayload} payload @param {string} quote
+   */
+  #drawQuote(line, payload, quote) {
+    const block = document.createElement('blockquote')
+    block.className = 'reference-block__quote'
+    block.textContent = quote
+    const title = (ReferenceRenderer.faceOf(payload).title || '').trim()
+    block.title = title ? ReferenceRenderer.#QUOTE_SOURCE + ' from ' + title : ReferenceRenderer.#QUOTE_SOURCE
+    line.innerHTML = ''
+    line.append(block)
   }
 
   /** The disclosure control — a real button, never a tab stop.

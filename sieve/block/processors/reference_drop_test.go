@@ -239,6 +239,7 @@ func TestDocumentAssets_mintKeyPolicy(t *testing.T) {
 		{name: "the stem is capped", mint: strings.Repeat("a", 100) + ".png", want: strings.Repeat("a", assetStemMax) + ".png"},
 		{name: "an extensionless name collides with an owned stem", owned: []string{"README"}, mint: "README", want: "README-2.txt"},
 		{name: "the content file is reserved", mint: "{doc}.md", want: "{doc}-2.md"},
+		{name: "the content file is reserved whatever its extension", mint: "{doc}.yaml", want: "{doc}-2.yaml"},
 		{name: "the content file's temporary is reserved", mint: "{doc}.md.tmp", want: "{doc}.md-2.tmp"},
 		{name: "letters of any script are kept", mint: "日本語.pdf", want: "日本語.pdf"},
 		{name: "accented letters are kept and spaces collapse", mint: "café résumé.PNG", want: "café-résumé.png"},

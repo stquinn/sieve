@@ -10,6 +10,7 @@ import "sieve/store"
 //	WorkingCopy  Isolated   "buffers" {root}/{hostname}/buffers/
 //	State        Isolated   "config"  {root}/{hostname}/config/
 //	Blocks       Shared     "blocks"  {root}/blocks/
+//	Chats        Shared     "chats"   {root}/chats/
 //
 // Note: Library uses Key "store" rather than "library" to match the existing
 // on-disk layout. Renaming requires a storage migration — decision deferred.
@@ -20,6 +21,8 @@ var (
 	WorkingCopy = store.Category{Key: "buffers", DisplayName: "Working Copy", MetaEnabled: true, Isolation: store.Isolated}
 	// Blocks holds block containers. Shared across all hosts.
 	Blocks = store.Category{Key: "blocks", DisplayName: "Blocks", MetaEnabled: true, Isolation: store.Shared}
+	// Chats holds chats, a directory per chat holding its files. Shared across all hosts.
+	Chats = store.Category{Key: "chats", DisplayName: "Chats", MetaEnabled: true, Isolation: store.Shared}
 	// State holds application state (settings, session). Scoped to the current host.
 	State = store.Category{Key: "config", DisplayName: "State", MetaEnabled: false, Isolation: store.Isolated}
 	// Prompts holds each AI task's addendum. Scoped to the current host.

@@ -33,6 +33,7 @@ alone, so the token appears in no response header.
 | Type | Payload | Correlated on | Purpose |
 |---|---|---|---|
 | `block-op` | `protocol.BlockOpFrame` | `opId` | BlockOpFrame applies one granular operation to the authoritative block tree. |
+| `chat-append-exchange` | `protocol.ChatAppendExchangeFrame` | — | ChatAppendExchangeFrame asks a question in this channel's chat, as a new exchange after the last. |
 | `detect-extractions` | `protocol.DetectExtractionsFrame` | `opId` | DetectExtractionsFrame asks which blocks a selection could become — the offer list behind the extract menu. |
 | `doc-update` | `protocol.DocUpdateFrame` | — | DocUpdateFrame carries the markdown-mode buffer's current text to the shadow document. |
 | `enter-markdown` | `protocol.EnterMarkdownFrame` | `opId` | EnterMarkdownFrame switches the document to markdown mode: the server embeds the current block state into markdown and answers with a MarkdownContentFrame carrying the merged text to seed the markdown editor. |
@@ -52,7 +53,7 @@ alone, so the token appears in no response header.
 | `load` | `protocol.LoadFrame` | `opId` | LoadFrame asks for the document this channel is bound to, as the editor mounts it. |
 | `paste` | `protocol.PasteFrame` | `opId` | PasteFrame hands a clipboard to the server to make sense of. |
 | `ping` | `protocol.PingFrame` | — | PingFrame is a liveness probe, answered with a PongFrame. |
-| `retry-block-job` | `protocol.RetryBlockJobFrame` | — | RetryBlockJobFrame re-runs the job of one block that failed or was interrupted. |
+| `retry-block-job` | `protocol.RetryBlockJobFrame` | — | RetryBlockJobFrame re-runs the job of one block that failed or was interrupted: a block of a note, an exchange of a chat, or a block nested in an answer. |
 | `set-presenting` | `protocol.SetPresentingFrame` | — | SetPresentingFrame records whether the document is in Presentation Mode on the session's tab, so a reopened tab is handed it back on the load answer. |
 | `text-replace` | `protocol.TextReplaceFrame` | `opId` | TextReplaceFrame asks for one anchored run of a block's text to be replaced. |
 
@@ -133,6 +134,7 @@ Topic is what an invalidate frame invalidates — the subject a view refetches w
 | `library` | the open library changed |
 | `intent` | a document's user_intent changed |
 | `ink` | the ink link, its last session's numbers or the synced notes changed |
+| `chats` | a chat was created, deleted or renamed |
 
 ## Frame reference
 
@@ -147,6 +149,15 @@ BlockOpFrame applies one granular operation to the authoritative block tree.
 | `type` | `string` | yes |  |
 | `opId` | `string` | no | echoed on the block-op-ack; absent means no ack is sent |
 | `op` | `block.BlockOp` | yes |  |
+
+#### `chat-append-exchange` — client → server
+
+ChatAppendExchangeFrame asks a question in this channel's chat, as a new exchange after the last.
+
+| Field | Go type | Required | Description |
+|---|---|---|---|
+| `type` | `string` | yes |  |
+| `question` | `[]block.FrontendBlock` | yes | the question, as the ordered blocks the exchange holds verbatim; at least one. A block with no id is given one |
 
 #### `detect-extractions` — client → server
 
@@ -341,7 +352,7 @@ PingFrame is a liveness probe, answered with a PongFrame.
 
 #### `retry-block-job` — client → server
 
-RetryBlockJobFrame re-runs the job of one block that failed or was interrupted.
+RetryBlockJobFrame re-runs the job of one block that failed or was interrupted: a block of a note, an exchange of a chat, or a block nested in an answer.
 
 | Field | Go type | Required | Description |
 |---|---|---|---|
@@ -591,7 +602,7 @@ LoadContentFrame answers a load.
 | `uuid` | `string` | yes | empty when nothing was found, which the client treats as an empty document |
 | `kind` | `string` | no | the container's own noun: note \| buffer \| prompt \| a block kind; absent when nothing was found |
 | `name` | `string` | no | what the container is called; absent when it has no name |
-| `scroll` | `int` | yes | the tab's saved scroll offset; 0 parks at the top |
+| `scroll` | `int` | yes | the tab's saved scroll position, in its surface's own pixels; 0 is where the surface opens a container never seen (a document's top, a chat's newest message) |
 | `version` | `int` | yes | the version of the content served here; 0 when the container keeps no version history |
 | `presenting` | `bool` | no | the tab was last left in Presentation Mode; absent when it was not |
 | `blocks` | `[]block.FrontendBlock` | no | WYSIWYG only: the block list, already through the shadow so ids are stable |
@@ -779,8 +790,8 @@ SessionScrollFrame persists one tab's scroll offset, debounced up while the user
 | Field | Go type | Required | Description |
 |---|---|---|---|
 | `type` | `string` | yes |  |
-| `id` | `string` | yes | the tab whose offset this is |
-| `scroll` | `int` | yes | the pixel offset from the top |
+| `id` | `string` | yes | the tab whose position this is |
+| `scroll` | `int` | yes | the scroll position in its surface's own pixels: from the top of a document, up from the newest message of a chat |
 
 #### `spell-ignore` — client → server
 
@@ -907,6 +918,8 @@ inventory below instead.
 
 | Operation | Response | Purpose |
 |---|---|---|
+| `POST /api/chat/{id}/describe` | none | ChatDescribeRequest names a chat now: {id} is the chat, and its name (unless a person named it), summary, keywords and categories are described again from its answered exchanges, whether or not it has grown since it was last described. |
+| `POST /api/chat/{id}/rename` | none | ChatRenameRequest names a chat by hand: {id} is the chat. |
 | `GET /api/document/load` | json | DocumentLoadRequest reads a channel-less pseudo-document's content. |
 | `POST /api/document/save` | json | DocumentSaveRequest writes a document's buffer to disk. |
 | `DELETE /api/document/{uuid}/asset/{key}` | none | AssetDeleteRequest deletes one asset of a document, irreversibly: {uuid} is the document and {key} the asset's key, path-escaped. |
@@ -921,6 +934,32 @@ inventory below instead.
 | `POST /api/ink/notes/{uuid}/resync` | none | InkResyncRequest syncs a synced Digital Note again from its first record: {uuid} is the note's block container, whose log is kept aside and pulled again from the tablet it came from. |
 | `PATCH /api/note/{id}` | fragment | NotePatchRequest changes a note's properties. |
 | `POST /api/tabs/close` | fragment | TabsCloseRequest closes every listed tab — the ONE close mechanism. |
+
+### `POST /api/chat/{id}/describe`
+
+Path parameters: `id`
+
+**Request** — `protocol.ChatDescribeRequest`
+
+ChatDescribeRequest names a chat now: {id} is the chat, and its name (unless a person named it), summary, keywords and categories are described again from its answered exchanges, whether or not it has grown since it was last described.
+
+**Response** — 204, or a body no caller reads.
+
+### `POST /api/chat/{id}/rename`
+
+Path parameters: `id`
+
+**Request** — `protocol.ChatRenameRequest`
+
+Accepts `application/json` or `application/x-www-form-urlencoded`, under the same field names.
+
+ChatRenameRequest names a chat by hand: {id} is the chat.
+
+| Field | Go type | Required | Description |
+|---|---|---|---|
+| `name` | `string` | yes | the chat's new name, trimmed; empty hands naming back |
+
+**Response** — 204, or a body no caller reads.
 
 ### `GET /api/document/load`
 
@@ -943,7 +982,7 @@ DocumentContent is a container as the editor mounts it: for a document the buffe
 | `uuid` | `string` | yes | empty when nothing was found, which the client treats as an empty document |
 | `kind` | `string` | no | the container's own noun: note \| buffer \| prompt \| a block kind; absent when nothing was found |
 | `name` | `string` | no | what the container is called; absent when it has no name |
-| `scroll` | `int` | yes | the tab's saved scroll offset; 0 parks at the top |
+| `scroll` | `int` | yes | the tab's saved scroll position, in its surface's own pixels; 0 is where the surface opens a container never seen (a document's top, a chat's newest message) |
 | `version` | `int` | yes | the version of the content served here; 0 when the container keeps no version history |
 | `presenting` | `bool` | no | the tab was last left in Presentation Mode; absent when it was not |
 | `blocks` | `[]block.FrontendBlock` | no | WYSIWYG only: the block list, already through the shadow so ids are stable |
@@ -1446,6 +1485,7 @@ or another protocol's own transport.
 
 | Method | Path | Contract |
 |---|---|---|
+| `DELETE` | `/api/chat/{id}` | — |
 | `DELETE` | `/api/document/{uuid}/asset/{key}` | typed (none) |
 | `DELETE` | `/api/folder/{id}` | — |
 | `DELETE` | `/api/ink/notes/{uuid}` | — |
@@ -1480,6 +1520,7 @@ or another protocol's own transport.
 | `GET` | `/ui/views/settings/ink` | — |
 | `GET` | `/ui/views/sidebar` | — |
 | `GET` | `/ui/views/sidebar/buffers` | — |
+| `GET` | `/ui/views/sidebar/chats` | — |
 | `GET` | `/ui/views/sidebar/dialog/{kind}` | — |
 | `GET` | `/ui/views/sidebar/diary` | — |
 | `GET` | `/ui/views/sidebar/ink` | — |
@@ -1487,6 +1528,9 @@ or another protocol's own transport.
 | `GET` | `/ui/views/tabs` | — |
 | `PATCH` | `/api/folder/{id}` | typed (fragment) |
 | `PATCH` | `/api/note/{id}` | typed (fragment) |
+| `POST` | `/api/chat` | — |
+| `POST` | `/api/chat/{id}/describe` | typed (none) |
+| `POST` | `/api/chat/{id}/rename` | typed (none) |
 | `POST` | `/api/container/open/{id}` | — |
 | `POST` | `/api/document/save` | typed (json) |
 | `POST` | `/api/folder` | typed (fragment) |

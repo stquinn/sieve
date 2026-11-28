@@ -17,6 +17,8 @@ channels:
     messages:
       documentBlockOp:
         $ref: '#/components/messages/documentBlockOp'
+      documentChatAppendExchange:
+        $ref: '#/components/messages/documentChatAppendExchange'
       documentDetectExtractions:
         $ref: '#/components/messages/documentDetectExtractions'
       documentDocUpdate:
@@ -169,6 +171,7 @@ operations:
     summary: Frames the server accepts on the document channel.
     messages:
       - $ref: '#/channels/document/messages/documentBlockOp'
+      - $ref: '#/channels/document/messages/documentChatAppendExchange'
       - $ref: '#/channels/document/messages/documentDetectExtractions'
       - $ref: '#/channels/document/messages/documentDocUpdate'
       - $ref: '#/channels/document/messages/documentEnterMarkdown'
@@ -272,6 +275,18 @@ components:
         $ref: '#/components/correlationIds/opId'
       payload:
         $ref: '#/components/schemas/ProtocolBlockOpFrame'
+    documentChatAppendExchange:
+      name: chat-append-exchange
+      title: chat-append-exchange
+      summary: ChatAppendExchangeFrame asks a question in this channel's chat, as a new exchange after the last.
+      description: |-
+        ChatAppendExchangeFrame asks a question in this channel's chat, as a new exchange after the last.
+        It is not answered: the new exchange arrives as an insert-block, born PENDING, and its answer
+        follows as block-attrs-updated frames. It is refused with an error frame when the channel is not
+        open on a chat or the question holds no block.
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/ProtocolChatAppendExchangeFrame'
     documentDetectExtractions:
       name: detect-extractions
       title: detect-extractions
@@ -523,8 +538,13 @@ components:
     documentRetryBlockJob:
       name: retry-block-job
       title: retry-block-job
-      summary: RetryBlockJobFrame re-runs the job of one block that failed or was interrupted.
-      description: RetryBlockJobFrame re-runs the job of one block that failed or was interrupted.
+      summary: 'RetryBlockJobFrame re-runs the job of one block that failed or was interrupted: a block of a note, an exchange of a chat, or a block nested in an answer.'
+      description: |-
+        RetryBlockJobFrame re-runs the job of one block that failed or was interrupted: a block of a note,
+        an exchange of a chat, or a block nested in an answer. It is not answered; the block arrives
+        again as a block-attrs-updated, PENDING. It is refused with an error frame when the container
+        holds no such block or refuses it: a chat refuses an exchange that has an answer or is being
+        answered.
       contentType: application/json
       payload:
         $ref: '#/components/schemas/ProtocolRetryBlockJobFrame'
@@ -1464,6 +1484,24 @@ components:
       required:
         - type
         - op
+    ProtocolChatAppendExchangeFrame:
+      type: object
+      description: |-
+        ChatAppendExchangeFrame asks a question in this channel's chat, as a new exchange after the last.
+        It is not answered: the new exchange arrives as an insert-block, born PENDING, and its answer
+        follows as block-attrs-updated frames. It is refused with an error frame when the channel is not
+        open on a chat or the question holds no block.
+      properties:
+        type:
+          type: string
+        question:
+          type: array
+          description: the question, as the ordered blocks the exchange holds verbatim; at least one. A block with no id is given one
+          items:
+            $ref: '#/components/schemas/BlockFrontendBlock'
+      required:
+        - type
+        - question
     ProtocolCommandArgs:
       type: object
       description: |-
@@ -2584,7 +2622,7 @@ components:
           description: what the container is called; absent when it has no name
         scroll:
           type: integer
-          description: the tab's saved scroll offset; 0 parks at the top
+          description: the tab's saved scroll position, in its surface's own pixels; 0 is where the surface opens a container never seen (a document's top, a chat's newest message)
         version:
           type: integer
           description: the version of the content served here; 0 when the container keeps no version history
@@ -2909,7 +2947,12 @@ components:
         - newYaml
     ProtocolRetryBlockJobFrame:
       type: object
-      description: RetryBlockJobFrame re-runs the job of one block that failed or was interrupted.
+      description: |-
+        RetryBlockJobFrame re-runs the job of one block that failed or was interrupted: a block of a note,
+        an exchange of a chat, or a block nested in an answer. It is not answered; the block arrives
+        again as a block-attrs-updated, PENDING. It is refused with an error frame when the container
+        holds no such block or refuses it: a chat refuses an exchange that has an answer or is being
+        answered.
       properties:
         type:
           type: string
@@ -2932,10 +2975,10 @@ components:
           type: string
         id:
           type: string
-          description: the tab whose offset this is
+          description: the tab whose position this is
         scroll:
           type: integer
-          description: the pixel offset from the top
+          description: 'the scroll position in its surface''s own pixels: from the top of a document, up from the newest message of a chat'
       required:
         - type
         - id
@@ -3168,6 +3211,7 @@ components:
         - library
         - intent
         - ink
+        - chats
     ProtocolWysiwygContentFrame:
       type: object
       description: |-

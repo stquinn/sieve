@@ -133,8 +133,19 @@ first keystroke, and it recognises the block's arrival by the plain id it chose.
   the note has no published log) and `noteSyncing()`, and the `InkFeed` event
   shapes its feed delivers (a stroke added or removed above that seq, the live
   records, the live page).
+- `chat-container-provider.js` — `ChatContainerProvider`, a chat's provider:
+  the read minimum plus `getExchanges()` (every exchange, an ai-block, in
+  order), `requestAsk(question)` (a list of blocks asked as a new exchange) and
+  `requestRetry(exchangeId)` (an unanswered exchange run again).
 - `selection-listener.js` — the one channel that flows the other way: a
   lens's selection/focus/caret advertisement, host-consumed.
+- `lens-capabilities.js` — the words a lens publishes about itself and an
+  offerable entry names as its requirement: `markdown`, `mentions`,
+  `commands`, `blocks`, and `ask` (the lens can be asked: `askAi` puts a
+  question to it, and the exchange it starts is held in its container). A lens
+  that can be asked may also offer `questionsAsked()`, the questions already
+  asked in its container, oldest first, each as the element list `askAi` takes;
+  a read of its provider, frozen, holding nothing.
 
 ## Package DAG (issue #96 comment 1694, target layout)
 

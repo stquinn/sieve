@@ -48,7 +48,10 @@ html, body {
 
 #ask-panel { height: var(--ask-panel-h); }
 
-#session-layout[data-askpanel="on"] ~ * #ask-panel {
+/* The pinned presentation: the user's pin, and the panel's own `is-pinned`
+   while it is held open by either pin. */
+#session-layout[data-askpanel="on"] ~ * #ask-panel,
+#ask-panel.is-pinned {
     display: flex;
     position: relative;
     z-index: 20;
@@ -303,6 +306,14 @@ body.presenting #table-toolbar {
   opacity: 0; cursor: pointer; font: inherit;
   color: var(--theme-text); background: var(--theme-bgAlt);
 }
+
+/* A line of text typed in the toolbar: a name being given, say. */
+.tb-field {
+  height: 29px; width: 18em; min-width: 8em; margin-right: 6px; padding: 0 8px;
+  border: 1px solid var(--theme-border2); border-radius: 4px;
+  background: var(--theme-bg); color: var(--theme-text); font: inherit; font-size: 0.9em;
+}
+.tb-field:focus { outline: 2px solid var(--theme-accentPrimary); outline-offset: -2px; }
 
 /* What is waiting to be seen, and a note being written now, are led by a dot. */
 .tb-btn.tb-attention::before,

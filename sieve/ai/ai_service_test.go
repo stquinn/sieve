@@ -169,6 +169,9 @@ func TestAIService_AnsweringRuns_BindTheExchangeAndReportAWrittenAnswer(t *testi
 			"discarded: the answer was written with add_to_answer (2 blocks)", ex},
 		{"explain, written", func(s *AIService) (Answer, error) { return s.RunExplain("c", "", "q", ex) }, 1, nil,
 			"discarded: the answer was written with add_to_answer (1 block)", ex},
+		{"chat, written", func(s *AIService) (Answer, error) { return s.RunChat(ChatData{Question: "q"}, ex) }, 2, nil,
+			"discarded: the answer was written with add_to_answer (2 blocks)", ex},
+		{"chat, never written", func(s *AIService) (Answer, error) { return s.RunChat(ChatData{Question: "q"}, ex) }, 0, nil, "", ex},
 		{"ask, the CLI fails", func(s *AIService) (Answer, error) { return s.RunAsk("c", "", "q", ex) }, 1, errors.New("cli timeout after 60 seconds"), "", ex},
 		{"a popup command, never written", func(s *AIService) (Answer, error) { return s.RunBtw("q", "", "", "", held) }, 0, nil, "", held},
 		{"a popup command, written", func(s *AIService) (Answer, error) { return s.RunBtw("q", "", "", "", held) }, 3, nil,
@@ -225,9 +228,11 @@ func TestAIService_EveryRunEndsItsToken(t *testing.T) {
 		bound domain.Exchange
 	}{
 		{"ask", func(s *AIService) error { _, err := s.RunAsk("c", "", "q", ex); return err }, ex},
+		{"chat", func(s *AIService) error { _, err := s.RunChat(ChatData{Question: "q"}, ex); return err }, ex},
 		{"btw", func(s *AIService) error { _, err := s.RunBtw("q", "", "", "", ex); return err }, ex},
 		{"image", func(s *AIService) error { _, err := s.DescribeImage(doc, page.String(), "b"); return err }, domain.Exchange{Container: doc}},
 		{"note-meta", func(s *AIService) error { _, err := s.DescribeNote(doc, []domain.Address{page}); return err }, domain.Exchange{Container: doc}},
+		{"chat-meta", func(s *AIService) error { _, err := s.DescribeChat(doc, []string{"q\n\n**ANSWER:** a"}); return err }, domain.Exchange{Container: doc}},
 		{"page-transcript", func(s *AIService) error { _, err := s.TranscribePage(doc, page); return err }, domain.Exchange{Container: doc}},
 		{"refine", func(s *AIService) error { _, err := s.RefineLanguage("x := 1", "", ""); return err }, domain.Exchange{}},
 		{"file", func(s *AIService) error {
@@ -457,6 +462,71 @@ func TestAIService_DescribeNote_ShowsThePagesAndReadsTheAnswer(t *testing.T) {
 				t.Errorf("op %q, cwd %q, profile for %q", cap.run.Task.Name, cap.run.Cwd, mcpEp.lastDoc)
 			}
 			cap.assertRan(t, svc.prompts, "note-meta", note, NoteMetaData{Pages: []string{"page-b-2.png", "page-a-1.png"}, Categories: []string{"Home", "Work"}})
+		})
+	}
+}
+
+// DescribeChat runs in the library's directory, shows the chat's turns oldest first, offers the
+// library's top-level folders as the categories, uses the chat's own containment profile, which may
+// not write an answer, and reads the model's JSON bare or fenced. A chat with no turns, or a dumb
+// tier, is an error, and the CLI does not run.
+func TestAIService_DescribeChat_ShowsTheThreadAndReadsTheAnswer(t *testing.T) {
+	const chat = "0197b1f4-5a5a-7000-8000-00000000c001"
+	answer := `{"title": "Parser error taxonomy", "keywords": ["parser", "errors"], "categories": ["Work"], "summary": "Kinds of parse error."}`
+	turns := []string{"What errors can a parser raise?\n\n**ANSWER:** Three kinds.", "Which is worst?\n\n**ANSWER:** The silent one."}
+	for _, tc := range []struct {
+		name    string
+		reply   string
+		turns   []string
+		dumb    bool
+		wantErr bool
+	}{
+		{"a bare answer", answer, turns, false, false},
+		{"a fenced answer", "```json\n" + answer + "\n```", turns, false, false},
+		{"no turns", answer, nil, false, true},
+		{"a dumb tier", answer, turns, true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cap := &captureRunner{ret: tc.reply}
+			svc := newSmartTestService(t, cap)
+			ds, err := services.NewDocumentService(svc.state.Store())
+			if err != nil {
+				t.Fatal(err)
+			}
+			svc.documents = ds
+			for _, folder := range []string{"Home", "Work"} {
+				if _, err := svc.state.Store().CreateOrLoadFolder(domain.LibraryCategory, folder); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tc.dumb {
+				settings := svc.state.LoadSettings()
+				settings.CLI, settings.CLIPath = "", ""
+				if err := svc.state.SaveSettings(settings); err != nil {
+					t.Fatal(err)
+				}
+			}
+			mcpEp := &fakeDocMCPEndpoint{url: "http://127.0.0.1:41234/mcp"}
+			svc.SetMCPEndpoint(mcpEp)
+
+			got, err := svc.DescribeChat(chat, tc.turns)
+			if tc.wantErr {
+				if err == nil || cap.run.Task.Name != "" {
+					t.Fatalf("DescribeChat = %+v, %v; the CLI ran %q", got, err, cap.run.Task.Name)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("DescribeChat: %v", err)
+			}
+			want := domain.NoteMetadata{Title: "Parser error taxonomy", Keywords: []string{"parser", "errors"}, Categories: []string{"Work"}, Summary: "Kinds of parse error.", CLI: "claude"}
+			if fmt.Sprint(got) != fmt.Sprint(want) {
+				t.Errorf("DescribeChat = %+v", got)
+			}
+			if cap.run.Task.Name != "chat-meta" || cap.run.Task.Writes() || cap.run.Cwd != svc.storePath || mcpEp.lastDoc != chat || mcpEp.lastWrites {
+				t.Errorf("op %q (writes %v), cwd %q, profile for %q (writes %v)", cap.run.Task.Name, cap.run.Task.Writes(), cap.run.Cwd, mcpEp.lastDoc, mcpEp.lastWrites)
+			}
+			cap.assertRan(t, svc.prompts, "chat-meta", chat, ChatMetaData{Turns: turns, Categories: []string{"Home", "Work"}})
 		})
 	}
 }

@@ -30,9 +30,9 @@ func TestSnapshotForJob_markdownModeDerivesBlocksFromBuffer(t *testing.T) {
 	if !ok {
 		t.Fatal("expected SnapshotForJob to find ab-1")
 	}
-	blk, found := doc.GetBlock("ab-1")
+	blk, found := doc.Block("ab-1")
 	if !found {
-		t.Fatal("expected DocView.GetBlock to resolve ab-1")
+		t.Fatal("expected the view's Block to resolve ab-1")
 	}
 	if got := blk.StringAttr("response"); got != "FRESH" {
 		t.Errorf("markdown-mode snapshot served stale per-block content: response=%q, want FRESH", got)

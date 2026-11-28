@@ -2,8 +2,11 @@ package services
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -53,33 +56,132 @@ func (as *AssetService) ServeAssetData(ownerUUID, filename string) ([]byte, erro
 	return nil, fmt.Errorf("asset not found: %s/%s", ownerUUID, filename)
 }
 
-// Delete removes the asset filename owned by document docUUID, irreversibly.
-// Whether any block still holds it is the caller's question; this removes the
-// file it is told to.
-func (as *AssetService) Delete(docUUID, filename string) error {
-	if err := as.st.DeleteAsset(domain.WorkingCopy, docUUID, filename); err != nil {
-		return fmt.Errorf("asset: delete %s from %s: %w", filename, docUUID, err)
+// Delete removes the asset filename of the container ownerUUID, wherever the
+// store holds it, irreversibly. Whether any block still holds it is the caller's
+// question; this removes the file it is told to.
+func (as *AssetService) Delete(ownerUUID, filename string) error {
+	owner, err := as.owner(ownerUUID)
+	if err != nil {
+		return fmt.Errorf("asset: delete %s from %s: %w", filename, ownerUUID, err)
+	}
+	if err := as.st.DeleteAsset(owner.Category(), ownerUUID, filename); err != nil {
+		return fmt.Errorf("asset: delete %s from %s: %w", filename, ownerUUID, err)
 	}
 	return nil
 }
 
-// Save stores binary data as an asset and returns the resulting ImageAsset.
-// category must be WorkingCopy (for buffer pastes) or LibraryCategory (for note
-// pastes). parentContext is the document logically owning the asset, and assetID
-// is the specific ID for this asset.
-// The Encoding is inferred from magic bytes by the Store.
+// Save keeps data as the asset assetKey of the container ownerUUID, wherever the
+// store holds it, and returns the resulting ImageAsset. The asset is attached to
+// the owner's ownership list without moving the owner's version, and replaces any
+// asset of the same key. The Encoding is inferred from magic bytes by the Store.
 //
 // The returned ImageAsset.ExternalRef() is the opaque reference suitable for
-// direct insertion into editor markdown:
-//
-//	asset, err := svc.Save(store.WorkingCopy, "buf.md", "blk-abc", data)
-//	editor.InsertContent("![](" + asset.ExternalRef() + ")")
-func (as *AssetService) Save(category store.Category, parentContext string, assetID string, data []byte) (*domain.ImageAsset, error) {
-	s, err := as.st.CreateAsset(category, parentContext, assetID, data)
+// direct insertion into editor markdown.
+func (as *AssetService) Save(ownerUUID, assetKey string, data []byte) (*domain.ImageAsset, error) {
+	owner, err := as.owner(ownerUUID)
 	if err != nil {
-		return nil, fmt.Errorf("asset: save %s for %s: %w", assetID, parentContext, err)
+		return nil, fmt.Errorf("asset: save %s for %s: %w", assetKey, ownerUUID, err)
+	}
+	s, err := store.OwnedAssets{Store: as.st}.Save(owner, assetKey, data)
+	if err != nil {
+		return nil, fmt.Errorf("asset: save %s for %s: %w", assetKey, ownerUUID, err)
 	}
 	return &domain.ImageAsset{S: s}, nil
+}
+
+// OwnedKeys returns the key of every asset the container ownerUUID holds, as
+// the store last recorded them.
+func (as *AssetService) OwnedKeys(ownerUUID string) ([]string, error) {
+	owner, err := as.owner(ownerUUID)
+	if err != nil {
+		return nil, fmt.Errorf("asset: list assets of %s: %w", ownerUUID, err)
+	}
+	var keys []string
+	for _, a := range owner.Owns() {
+		keys = append(keys, a.Key())
+	}
+	return keys, nil
+}
+
+// owner finds the container uuid in the store, whatever category holds it.
+func (as *AssetService) owner(uuid string) (store.MetaStorable, error) {
+	s, err := as.st.LoadByUUID(uuid)
+	if err != nil {
+		return nil, err
+	}
+	ms, ok := s.(store.MetaStorable)
+	if !ok {
+		return nil, fmt.Errorf("%s is not a container that keeps assets", uuid)
+	}
+	return ms, nil
+}
+
+// PageAssetKey returns the deterministic HTML asset filename for rawURL,
+// page-{slug}-{hash}.html.
+// Two calls for the same URL address the same asset key within a container.
+func (as *AssetService) PageAssetKey(rawURL string) string {
+	trimmed := strings.TrimSpace(rawURL)
+	sum := sha256.Sum256([]byte(trimmed))
+	shortHash := hex.EncodeToString(sum[:6])
+	slug := as.urlSlug(trimmed)
+	if slug == "" {
+		return "page-" + shortHash + ".html"
+	}
+	return "page-" + slug + "-" + shortHash + ".html"
+}
+
+// PageAssetAddress returns the absolute sieve://{owner}/{key} address of the
+// page asset for rawURL when the container ownerUUID owns that asset, or the
+// empty string when it does not (or ownerUUID names nothing).
+func (as *AssetService) PageAssetAddress(ownerUUID, rawURL string) string {
+	if strings.TrimSpace(ownerUUID) == "" || strings.TrimSpace(rawURL) == "" {
+		return ""
+	}
+	keys, err := as.OwnedKeys(ownerUUID)
+	if err != nil {
+		return ""
+	}
+	key := as.PageAssetKey(rawURL)
+	for _, k := range keys {
+		if k == key {
+			return domain.NewLeafAddress(ownerUUID, key).String()
+		}
+	}
+	return ""
+}
+
+// urlSlug reduces rawURL to a short lowercase host-and-last-segment slug for a page key.
+func (as *AssetService) urlSlug(rawURL string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return ""
+	}
+	host := strings.TrimPrefix(strings.ToLower(u.Hostname()), "www.")
+	var tail string
+	for _, seg := range strings.Split(u.Path, "/") {
+		if s := strings.TrimSpace(seg); s != "" {
+			tail = s
+		}
+	}
+	raw := host
+	if tail != "" {
+		raw = host + "-" + tail
+	}
+	var b strings.Builder
+	prevHyphen := false
+	for _, r := range strings.ToLower(raw) {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+			prevHyphen = false
+		} else if !prevHyphen && b.Len() > 0 {
+			b.WriteByte('-')
+			prevHyphen = true
+		}
+		if b.Len() >= 40 {
+			break
+		}
+	}
+	return strings.Trim(b.String(), "-")
 }
 
 // ServeStoreFile reads a file addressed relative to the library root. It backs

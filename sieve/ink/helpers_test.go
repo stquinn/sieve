@@ -2,10 +2,10 @@ package ink
 
 import (
 	"testing"
-	"time"
 
 	"sieve/sieve/block"
 	"sieve/sieve/block/processors"
+	"sieve/sieve/clocktest"
 	"sieve/sieve/ink/link"
 	"sieve/sieve/services"
 	"sieve/store/filestore"
@@ -52,11 +52,5 @@ func reopen(t *testing.T, st *filestore.FileStore) *services.BlockContainerServi
 // waitFor polls until ok holds, failing after five seconds.
 func waitFor(t *testing.T, ok func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
-	for !ok() {
-		if time.Now().After(deadline) {
-			t.Fatal("never settled")
-		}
-		time.Sleep(time.Millisecond)
-	}
+	clocktest.WaitFor(t, ok)
 }

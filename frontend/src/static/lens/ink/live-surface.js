@@ -25,7 +25,7 @@ import { PageSurface } from './page-surface.js'
  * reported, and where what came of an action is said.
  * @typedef {object} LiveSurfaceHost
  * @property {(event: import('../abstract-surface.js').SurfaceEventMsg) => void} onSurfaceEvent
- * @property {import('./action-status.js').ActionStatus} actionStatus
+ * @property {import('../../renderers/action-status.js').ActionStatus} actionStatus
  */
 
 /**

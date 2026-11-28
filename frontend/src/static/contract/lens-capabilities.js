@@ -15,6 +15,15 @@ export const LensCapability = Object.freeze({
   COMMANDS: 'commands',
   /** mints Sieve blocks in its container */
   BLOCKS: 'blocks',
+  /** can be asked: `askAi` puts a question to it, and the exchange it starts is
+   *  held in its container. A lens that can be asked MAY also offer
+   *  `questionsAsked()`: the questions already asked in its container, oldest
+   *  first, each as the list of `{kind, attrs}` elements it was asked with — the
+   *  shape `askAi` takes as `question`. It reads the lens's provider each time it
+   *  is called, holds nothing, and returns frozen plain values; a question with
+   *  no element left to give is not in it. A lens without it says nothing of
+   *  what it was asked. */
+  ASK: 'ask',
 })
 
 /** Every capability word, for a consumer validating a declaration against the
@@ -36,4 +45,5 @@ export const LENS_CAPABILITIES = Object.freeze(Object.values(LensCapability))
  * @property {boolean} mentions
  * @property {boolean} commands
  * @property {boolean} blocks
+ * @property {boolean} ask
  */

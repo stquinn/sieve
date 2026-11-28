@@ -1,48 +1,14 @@
 package block
 
 import (
-	"fmt"
-	"time"
-
 	"sieve/logger"
 	"sieve/sieve/domain"
 )
 
-// This file holds ShadowDocument's snapshot + atomic-mutation methods. Together
-// with shadow_document.go they make ShadowDocument the SOLE owner of its data and
-// its mutex: every read or write that needs the lock is a method here, taken
-// under s.mu internally. EditorService orchestrates (processor dispatch, listener
-// notify, persistence) by CALLING these — it never touches s.mu or s's fields.
-
-// SnapshotBlock returns a deep copy of the block with id — a top-level block or
-// an element of one — (fresh Attrs map), or false if absent. The copy is safe to read/mutate outside the lock.
-func (s *ShadowDocument) SnapshotBlock(id string) (domain.SieveBlock, bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	b := s.findBlock(id)
-	if b == nil {
-		return domain.SieveBlock{}, false
-	}
-	return b.Clone(), true
-}
-
-// SnapshotBlocks returns a DEEP copy of the live tree (each block's Attrs is a
-// fresh map). The copy is therefore safe to read after the lock is released, even
-// while a concurrent job mutates the live tree — callers (FrontendBlocks, status
-// polls) must not race the live Attrs maps, which an aliased copy would.
-func (s *ShadowDocument) SnapshotBlocks() []domain.SieveBlock {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	out := make([]domain.SieveBlock, len(s.Blocks))
-	for i := range s.Blocks {
-		out[i] = s.Blocks[i].Clone()
-	}
-	return out
-}
-
 // SnapshotForJob captures, under ONE lock, both a deep copy of the target block
 // — a top-level block or an element of one — (for the processor to mutate) and an immutable DocView of the whole document
-// (for the job to resolve any block by id). Returns false if the block is absent.
+// (for the job to resolve any block by id). Returns false, and a nil view, if the
+// block is absent.
 //
 // The DocView is READ-ONLY, job-creation-time context: a background job (any async
 // task, not just AI) reads it ONLY to build its prompt/context before its long
@@ -55,7 +21,7 @@ func (s *ShadowDocument) SnapshotBlocks() []domain.SieveBlock {
 // would see stale content. Derive the tree from the authoritative buffer instead, so
 // the snapshot is internally consistent. Save is unaffected: deriveMarkdown returns
 // the buffer verbatim in markdown mode, never a re-serialization of this tree.
-func (s *ShadowDocument) SnapshotForJob(blockID string) (domain.SieveBlock, DocView, bool) {
+func (s *ShadowDocument) SnapshotForJob(blockID string) (domain.SieveBlock, ContainerView, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	blocks := s.Blocks
@@ -68,81 +34,16 @@ func (s *ShadowDocument) SnapshotForJob(blockID string) (domain.SieveBlock, DocV
 	}
 	target, _ := s.locate(blocks, blockID)
 	if target == nil {
-		return domain.SieveBlock{}, DocView{}, false
+		return domain.SieveBlock{}, nil, false
 	}
 	doc := DocView{
-		UUID:             s.UUID,
-		rawAuthoritative: s.rawAuthoritative,
-		mdModeBuffer:     s.mdModeBuffer,
-		Blocks:           append([]domain.SieveBlock(nil), blocks...),
-		codec:            s.codec,
+		ContainerAddressing: ContainerAddressing{UUID: s.UUID},
+		rawAuthoritative:    s.rawAuthoritative,
+		mdModeBuffer:        s.mdModeBuffer,
+		Blocks:              append([]domain.SieveBlock(nil), blocks...),
+		codec:               s.codec,
 	}
 	return target.Clone(), doc, true
-}
-
-// TryDispatch atomically transitions the block from PENDING to DISPATCHED and
-// returns a deep copy of the now-DISPATCHED block. Returns false (no change) if
-// the block is absent or not PENDING — so the caller dispatches a job exactly
-// once even under concurrent calls.
-func (s *ShadowDocument) TryDispatch(id string) (domain.SieveBlock, bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	b := s.findBlock(id)
-	if b == nil || b.Status() != BlockStatusPending {
-		return domain.SieveBlock{}, false
-	}
-	b.Attrs["status"] = BlockStatusDispatched
-	return b.Clone(), true
-}
-
-// AppendElement adds el to the end of the element list the block with id holds
-// under key, or makes it the whole list when startOver is set, and returns a deep
-// copy of the block as it now stands. It refuses a block that is absent or whose
-// job is not running: elements are written into a slot only while its block is
-// being answered. It does not schedule an autosave; the job's end saves.
-func (s *ShadowDocument) AppendElement(id, key string, el domain.SieveBlock, startOver bool) (domain.SieveBlock, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	b := s.findBlock(id)
-	if b == nil {
-		return domain.SieveBlock{}, fmt.Errorf("block %q is not in this document", id)
-	}
-	if status := b.Status(); status != BlockStatusDispatched {
-		return domain.SieveBlock{}, fmt.Errorf("block %q is not being answered (status %s)", id, status)
-	}
-	var list domain.Elements
-	if !startOver {
-		list = append(list, domain.DecodeElements(b.Attrs[key])...)
-	}
-	b.SetElements(key, append(list, el))
-	return b.Clone(), nil
-}
-
-// ResetStuckDispatched flips every DISPATCHED block — top-level or an element of
-// one — older than threshold (or with no createdAt) back to PENDING and returns
-// their ids, so the caller can re-queue their jobs. Used on (re)open to recover
-// jobs stranded by a crash/restart.
-func (s *ShadowDocument) ResetStuckDispatched(threshold time.Duration) []string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	var stuck []string
-	s.eachBlock(func(blk *domain.SieveBlock) {
-		if blk.Status() != BlockStatusDispatched {
-			return
-		}
-		createdAt := blk.StringAttr("createdAt")
-		stale := createdAt == ""
-		if !stale {
-			if t, err := time.Parse(time.RFC3339, createdAt); err == nil && time.Since(t) > threshold {
-				stale = true
-			}
-		}
-		if stale {
-			blk.Attrs["status"] = BlockStatusPending
-			stuck = append(stuck, blk.ID)
-		}
-	})
-	return stuck
 }
 
 // EnterMarkdownMode seeds the markdown-mode raw buffer and raises the

@@ -24,6 +24,9 @@ func (c *SummaryCommand) Build(text string, ctx command.Context) (command.Job, e
 	if err := c.available(); err != nil {
 		return command.Job{}, err
 	}
+	if err := c.readsDocument(c.Name(), ctx); err != nil {
+		return command.Job{}, err
+	}
 	prompt := "Summarize the provided text or document in 3 concise, impactful Markdown bullet points. Keep it clear, direct, and factual. No intro preamble or concluding questions."
 	if strings.TrimSpace(text) != "" {
 		prompt += "\n\nSpecific focus from user: " + text

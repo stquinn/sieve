@@ -52,6 +52,7 @@ func mustCreate(t *testing.T, fs *filestore.FileStore, cat store.Category, key s
 var contentTypes = []struct{ contentType, ext string }{
 	{store.TypeDocument, ".md"},
 	{store.TypeBlock, ".block"},
+	{store.TypeChat, ".chat"},
 }
 
 // mustCreateTyped creates a storable of contentType with body held verbatim.

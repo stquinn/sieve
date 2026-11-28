@@ -65,14 +65,14 @@ func TestAIBlockMode(t *testing.T) {
 
 func TestAIBlockJobLabel(t *testing.T) {
 	p := &AIBlockProcessor{}
-	ask := p.DescribeJob(block.JobContext{Block: &domain.SieveBlock{ID: "ai-ask", Attrs: map[string]interface{}{"type": "ASK"}}})
+	ask := p.DescribeJob(block.JobContext{Doc: block.DocView{}, Block: &domain.SieveBlock{ID: "ai-ask", Attrs: map[string]interface{}{"type": "ASK"}}})
 	if ask.Label == "" {
 		t.Error("expected non-empty label for ASK")
 	}
 	if ask.Category != block.CategoryAI {
 		t.Errorf("expected CategoryAI, got %q", ask.Category)
 	}
-	explain := p.DescribeJob(block.JobContext{Block: &domain.SieveBlock{ID: "ai-exp", Attrs: map[string]interface{}{"type": "EXPLAIN"}}})
+	explain := p.DescribeJob(block.JobContext{Doc: block.DocView{}, Block: &domain.SieveBlock{ID: "ai-exp", Attrs: map[string]interface{}{"type": "EXPLAIN"}}})
 	if explain.Label == "" {
 		t.Error("expected non-empty label for EXPLAIN")
 	}
@@ -86,7 +86,7 @@ func TestAIBlockBuildContext(t *testing.T) {
 	blk := domain.NewSieveBlock("ai-block", "ai-ab12", map[string]interface{}{block.AnswerAttr: "A compiled language."})
 	blk.SetElements(block.QuestionAttr, domain.Elements{foldProse("What is Go?")})
 
-	ctx := p.BuildContext(blk, block.DocView{UUID: foldDocUUID}, map[string]bool{})
+	ctx := p.BuildContext(blk, block.DocView{ContainerAddressing: block.ContainerAddressing{UUID: foldDocUUID}}, map[string]bool{})
 	if !strings.Contains(ctx.String(), "What is Go?") || !strings.Contains(ctx.String(), "A compiled language.") {
 		t.Errorf("unexpected context: %q", ctx)
 	}
@@ -169,7 +169,7 @@ func TestAIBlock_actionContext_hasAddressHeaderButNoOwnAnswer(t *testing.T) {
 	})
 	blk.SetElements(block.QuestionAttr, domain.Elements{foldTarget(foldLeafID), foldProse("Follow up?")})
 
-	doc := block.DocView{UUID: foldDocUUID}
+	doc := block.DocView{ContainerAddressing: block.ContainerAddressing{UUID: foldDocUUID}}
 	actionCtx := doc.NodeContext(blk.ID, p.qaHeader(blk, doc)).String()
 	if !strings.HasPrefix(actionCtx, addressHeader(foldDocUUID, "ai-act")) {
 		t.Errorf("ACTION lost its ADDRESS header; got %q", actionCtx)

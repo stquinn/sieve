@@ -1,10 +1,7 @@
 package services
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
-	"net/url"
 	"path"
 	"path/filepath"
 	"sieve/ident"
@@ -210,80 +207,6 @@ func (ds *DocumentService) AttachAsset(n domain.Document, a store.AssetStorable)
 	return err
 }
 
-// SaveAsset writes data as an asset named assetKey inside doc's directory and
-// attaches it to doc's in-memory ownership list without bumping the document's
-// metadata version.
-func (ds *DocumentService) SaveAsset(doc domain.Document, assetKey string, data []byte) (store.AssetStorable, error) {
-	return store.OwnedAssets{Store: ds.store}.Save(doc.Storable(), assetKey, data)
-}
-
-// PageAssetKey returns the deterministic HTML asset filename for rawURL,
-// page-{slug}-{hash}.html.
-// Two calls for the same URL address the same asset key within a document.
-func (ds *DocumentService) PageAssetKey(rawURL string) string {
-	trimmed := strings.TrimSpace(rawURL)
-	sum := sha256.Sum256([]byte(trimmed))
-	shortHash := hex.EncodeToString(sum[:6])
-	slug := ds.urlSlug(trimmed)
-	if slug == "" {
-		return "page-" + shortHash + ".html"
-	}
-	return "page-" + slug + "-" + shortHash + ".html"
-}
-
-// PageAssetAddress returns the absolute sieve://{doc}/{key} coordinate of the
-// page asset for rawURL when document uuid owns that asset, or empty string
-// when no page asset for rawURL exists in uuid.
-func (ds *DocumentService) PageAssetAddress(uuid, rawURL string) string {
-	if strings.TrimSpace(uuid) == "" || strings.TrimSpace(rawURL) == "" {
-		return ""
-	}
-	doc, err := ds.LoadByUUID(uuid)
-	if err != nil {
-		return ""
-	}
-	key := ds.PageAssetKey(rawURL)
-	for _, owned := range doc.Storable().Owns() {
-		if owned.Key() == key {
-			return domain.NewLeafAddress(doc.UUID(), key).String()
-		}
-	}
-	return ""
-}
-
-func (ds *DocumentService) urlSlug(rawURL string) string {
-	u, err := url.Parse(rawURL)
-	if err != nil {
-		return ""
-	}
-	host := strings.TrimPrefix(strings.ToLower(u.Hostname()), "www.")
-	var tail string
-	for _, seg := range strings.Split(u.Path, "/") {
-		if s := strings.TrimSpace(seg); s != "" {
-			tail = s
-		}
-	}
-	raw := host
-	if tail != "" {
-		raw = host + "-" + tail
-	}
-	var b strings.Builder
-	prevHyphen := false
-	for _, r := range strings.ToLower(raw) {
-		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
-			b.WriteRune(r)
-			prevHyphen = false
-		} else if !prevHyphen && b.Len() > 0 {
-			b.WriteByte('-')
-			prevHyphen = true
-		}
-		if b.Len() >= 40 {
-			break
-		}
-	}
-	return strings.Trim(b.String(), "-")
-}
-
 // IncrementFocusCount increments the focus_count in metadata and saves it.
 func (ds *DocumentService) IncrementFocusCount(n domain.Document) (domain.Document, error) {
 	meta := n.Meta()
@@ -326,14 +249,10 @@ func (ds *DocumentService) RefreshTabStatus(tabs []domain.Tab) []domain.Tab {
 // UpdateAiMetadata applies an AI filing recommendation to the document metadata and saves it.
 func (ds *DocumentService) UpdateAiMetadata(d domain.Document, rec *domain.FilingRecommendation, cli string) (domain.Document, error) {
 	meta := d.Meta()
-	now := time.Now().Format("2006-01-02T15:04:05")
 	meta.SetAiEval("complete")
-	meta.SetAiLastEvaluated(&now)
+	meta.RecordAiRun(cli, time.Now())
 	keep := rec.Keep
 	meta.SetAiKeep(&keep)
-	if cli != "" {
-		meta.SetCLI(&cli)
-	}
 	if rec.Title != "" {
 		meta.SetDisplayName(rec.Title)
 	}

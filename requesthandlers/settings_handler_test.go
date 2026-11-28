@@ -332,6 +332,132 @@ func TestSettingsSaveRoute_PersistsCLIPath(t *testing.T) {
 	}
 }
 
+// End-to-end over the REAL /api/settings save route and the settings view: each
+// width in Appearance is saved in characters with its unit, a blank one is saved
+// as unset, and the view shows the saved number back in its field.
+func TestSettingsSaveRoute_PersistsEachWidthAndShowsItBack(t *testing.T) {
+	fields := []struct {
+		name  string
+		saved func(domain.LookAndFeel) string
+	}{
+		{"look_and_feel_editor_measure", func(l domain.LookAndFeel) string { return l.EditorMeasure }},
+		{"look_and_feel_presentation_measure", func(l domain.LookAndFeel) string { return l.PresentationMeasure }},
+		{"look_and_feel_chat_measure", func(l domain.LookAndFeel) string { return l.ChatMeasure }},
+	}
+	values := []struct{ label, posted, stored string }{{"88", "88", "88ch"}, {"120 padded", " 120 ", "120ch"}, {"blank", "", ""}}
+	for _, f := range fields {
+		for _, v := range values {
+			t.Run(f.name+"/"+v.label, func(t *testing.T) {
+				h, _ := newTestSettingsHandler(t)
+				r := chi.NewRouter()
+				h.RegisterPaths(r)
+				srv := httptest.NewServer(r)
+				t.Cleanup(srv.Close)
+
+				form := url.Values{"cli": {"claude"}, "cli_timeout_long": {"20"}, "last_settings_panel": {"appearance"}, f.name: {v.posted}}
+				resp, err := http.PostForm(srv.URL+"/api/settings", form)
+				if err != nil {
+					t.Fatalf("POST /api/settings: %v", err)
+				}
+				_, _ = io.Copy(io.Discard, resp.Body)
+				resp.Body.Close()
+				if resp.StatusCode != http.StatusOK {
+					t.Fatalf("status = %d, want 200", resp.StatusCode)
+				}
+				if got := f.saved(h.ServiceProvider.State.LoadSettings().LookAndFeel); got != v.stored {
+					t.Errorf("%s saved as %q, want %q", f.name, got, v.stored)
+				}
+
+				view, err := http.Get(srv.URL + "/ui/views/settings")
+				if err != nil {
+					t.Fatalf("GET /ui/views/settings: %v", err)
+				}
+				defer view.Body.Close()
+				doc, err := html.Parse(view.Body)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var input *html.Node
+				for n := range doc.Descendants() {
+					if n.Type != html.ElementNode || n.Data != "input" {
+						continue
+					}
+					for _, a := range n.Attr {
+						if a.Key == "name" && a.Val == f.name {
+							input = n
+						}
+					}
+				}
+				if input == nil {
+					t.Fatalf("the settings view has no %s field", f.name)
+				}
+				attrs := map[string]string{}
+				for _, a := range input.Attr {
+					attrs[a.Key] = a.Val
+				}
+				if attrs["value"] != strings.TrimSpace(v.posted) || attrs["min"] != "48" || attrs["max"] != "140" {
+					t.Errorf("%s field = value %q min %q max %q, want %q, 48, 140", f.name, attrs["value"], attrs["min"], attrs["max"], strings.TrimSpace(v.posted))
+				}
+			})
+		}
+	}
+}
+
+// End-to-end over the REAL /api/settings save route and the settings view: the Chats tab's settle
+// time is saved in seconds, a blank one as the default, one that is not a positive number leaves
+// the setting as it was, a form without the field leaves it alone, and the view shows the time in
+// force back in its field.
+func TestSettingsSaveRoute_PersistsTheChatSettleTimeAndShowsItBack(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		form   url.Values
+		stored int
+		shown  string
+	}{
+		{"a number of seconds", url.Values{"chat_settle_seconds": {"90"}}, 90, "90"},
+		{"padded", url.Values{"chat_settle_seconds": {" 600 "}}, 600, "600"},
+		{"blank is the default", url.Values{"chat_settle_seconds": {""}}, 0, "300"},
+		{"not a positive number", url.Values{"chat_settle_seconds": {"-5"}}, 45, "45"},
+		{"absent", url.Values{}, 45, "45"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h, _ := newTestSettingsHandler(t)
+			settings := h.ServiceProvider.State.LoadSettings()
+			settings.Chat.SettleSeconds = 45
+			if err := h.ServiceProvider.State.SaveSettings(settings); err != nil {
+				t.Fatal(err)
+			}
+			r := chi.NewRouter()
+			h.RegisterPaths(r)
+			srv := httptest.NewServer(r)
+			t.Cleanup(srv.Close)
+
+			form := url.Values{"cli": {"claude"}, "cli_timeout_long": {"20"}, "last_settings_panel": {"chats"}}
+			for k, v := range tc.form {
+				form[k] = v
+			}
+			resp, err := http.PostForm(srv.URL+"/api/settings", form)
+			if err != nil {
+				t.Fatalf("POST /api/settings: %v", err)
+			}
+			body, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("status = %d, want 200", resp.StatusCode)
+			}
+			saved := h.ServiceProvider.State.LoadSettings()
+			if saved.Chat.SettleSeconds != tc.stored || saved.Ink.SettleSeconds != 0 {
+				t.Errorf("chat settle saved as %d (ink %d), want %d and ink untouched", saved.Chat.SettleSeconds, saved.Ink.SettleSeconds, tc.stored)
+			}
+			for _, want := range []string{`name="chat_settle_seconds" value="` + tc.shown + `"`, `id="settings-tab-chats" style="display: block;"`, `transition: all 0.2s;">Chats</button>`} {
+				if !strings.Contains(string(body), want) {
+					t.Errorf("the settings view lacks %s", want)
+				}
+			}
+		})
+	}
+}
+
 // withLearnedWords wires a spell inspector into h whose dictionary persists
 // through h's own StateService, and teaches it words.
 func withLearnedWords(t *testing.T, h *SettingsHandler, words ...string) {
@@ -458,6 +584,9 @@ func newInkServer(t *testing.T) (*httptest.Server, *sieve.ServiceProvider) {
 	}
 	sp.Containers = containers
 	if sp.Documents, err = services.NewDocumentService(sp.Store); err != nil {
+		t.Fatal(err)
+	}
+	if sp.Chats, err = services.NewChatService(sp.Store, block.NewChatCodec(block.GlobalRegistry())); err != nil {
 		t.Fatal(err)
 	}
 	sp.Ink = ink.NewInkService(sp.State, containers, ink.NewNoteStaging(t.TempDir()), nil, holdingRadio{}, nil)
@@ -906,6 +1035,9 @@ func TestDiarySidebar_FollowsNotebooksWhileADiaryIsHeld(t *testing.T) {
 	notebooks, diary, folder := strings.Index(tree, "ink-tree__row"), strings.Index(tree, mount+`<div class="ink-tree__row"`), strings.Index(tree, ">Work<")
 	if notebooks < 0 || diary < notebooks || folder < diary {
 		t.Errorf("the Diary item is not between Notebooks and the folders:\n%s", tree)
+	}
+	if chats := strings.Index(tree, `<div id="sidebar-chats"`); chats < diary || folder < chats {
+		t.Errorf("the Chats item is not between the Diary and the folders:\n%s", tree)
 	}
 	if strings.Contains(get("/ui/views/sidebar/diary"), "November 2026") {
 		t.Error("the Diary item starts expanded")

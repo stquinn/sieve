@@ -170,7 +170,7 @@ func (p *LogProcessor) Transform(entries []block.ContentEntry, uuid string, bloc
 
 func (p *LogProcessor) OnChange(_ *domain.SieveBlock) {}
 
-func (p *LogProcessor) BuildContext(blk domain.SieveBlock, doc block.DocView, seen map[string]bool) block.AIContext {
+func (p *LogProcessor) BuildContext(blk domain.SieveBlock, doc block.ContainerView, seen map[string]bool) block.AIContext {
 	src, _ := blk.Attrs["source"].(string)
 	if strings.TrimSpace(src) == "" {
 		return block.AIContext{}
@@ -493,12 +493,7 @@ func (p *LogProcessor) DescribeJob(jctx block.JobContext) *block.ProcessorJob {
 				return nil, err
 			}
 
-			cat := domain.WorkingCopy
-			if d, err := p.svc.Documents.LoadByUUID(uuid); err == nil && d.Kind() == domain.KindNote {
-				cat = domain.LibraryCategory
-			}
-
-			asset, err := p.svc.Assets.Save(cat, uuid, id+"-parsed", jsonData)
+			asset, err := p.svc.Assets.Save(uuid, id+"-parsed", jsonData)
 			if err != nil {
 				return nil, err
 			}

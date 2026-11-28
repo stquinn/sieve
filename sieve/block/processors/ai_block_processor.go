@@ -178,7 +178,7 @@ func (p *AIBlockProcessor) proseElements(spans ...string) domain.Elements {
 // answerText renders the answer slot: the merged CONTENT of its elements,
 // through the same per-kind AI seam the question body renders through — so an
 // answer composed of any kind reads to a model the way that kind reads.
-func (p *AIBlockProcessor) answerText(blk domain.SieveBlock, doc block.DocView) string {
+func (p *AIBlockProcessor) answerText(blk domain.SieveBlock, doc block.ContainerView) string {
 	return strings.TrimSpace(block.MergeContexts(p.elementContexts(p.answerElements(blk), doc)).Content)
 }
 
@@ -191,8 +191,10 @@ func (p *AIBlockProcessor) aiBlockLabel(blk *domain.SieveBlock) string {
 }
 
 // qaHeader renders the QUESTION-side of this block's Q&A WITHOUT its own answer:
-// "EXPLAIN NODE: <address>" or "QUESTION ABOUT: <address>\n<question>", followed by this
-// turn's ATTACHED DOCUMENTS section when it has one. It is the ACTION
+// "EXPLAIN NODE: <address>" or "QUESTION ABOUT: <address>\n<question>", followed by the
+// "Specifically regarding" line of what its local targets quote (localFocus), then this
+// turn's ATTACHED DOCUMENTS section when it has one. A question about nothing it
+// can name is its text alone, with no QUESTION ABOUT line. It is the ACTION
 // assembly — the block being asked must never carry its own prior answer, or a
 // retry (where the doc snapshot already holds a stale answer) biases the new answer.
 // BuildContext (THREAD / ref-chain / target callers) calls this then appends the
@@ -202,7 +204,7 @@ func (p *AIBlockProcessor) aiBlockLabel(blk *domain.SieveBlock) string {
 // question, and this is the one place a question is rendered, so every turn in a
 // thread carries the documents it was given. The order falls out — QUESTION,
 // then ATTACHED DOCUMENTS, then the answer BuildContext appends.
-func (p *AIBlockProcessor) qaHeader(blk domain.SieveBlock, doc block.DocView) string {
+func (p *AIBlockProcessor) qaHeader(blk domain.SieveBlock, doc block.ContainerView) string {
 	q := p.foldQuestion(blk, doc)
 	t, _ := blk.Attrs["type"].(string)
 	named := q.targets.shown(doc)
@@ -212,14 +214,41 @@ func (p *AIBlockProcessor) qaHeader(blk domain.SieveBlock, doc block.DocView) st
 		sb.WriteString("EXPLAIN NODE: ")
 		sb.WriteString(named.names())
 	} else {
-		sb.WriteString("QUESTION ABOUT: ")
-		sb.WriteString(named.names())
-		if text := strings.TrimSpace(p.questionText(q.body, doc)); text != "" {
-			sb.WriteString("\n")
-			sb.WriteString(text)
+		text := strings.TrimSpace(p.questionText(q.body, doc))
+		if names := named.names(); names != "" {
+			sb.WriteString("QUESTION ABOUT: ")
+			sb.WriteString(names)
+			if text != "" {
+				sb.WriteString("\n")
+			}
+		}
+		sb.WriteString(text)
+	}
+	sb.WriteString(p.localFocus(named, doc))
+	return q.attachments.AppendTo(sb.String())
+}
+
+// localFocus renders, as one block.FocusTag trailer, what t's LOCAL targets say
+// the question is specifically about: the words a quote of a block in this
+// container holds. A local target is rendered by its handle, as the block it
+// names or, already in the thread, not at all, so its element's own focus reaches
+// the prompt only here. A target elsewhere is rendered as its own element in the
+// TARGET slot (buildTargets), which carries its focus there. "" when no local
+// target states one.
+func (p *AIBlockProcessor) localFocus(t questionTargets, doc block.ContainerView) string {
+	var local []*domain.SieveBlock
+	for _, el := range t.els {
+		if _, ok := t.localToken(el); ok {
+			local = append(local, el)
 		}
 	}
-	return q.attachments.AppendTo(sb.String())
+	var focus []block.Tag
+	for _, tag := range block.MergeContexts(p.elementContexts(local, doc)).Tags {
+		if tag.Label == block.FocusTag {
+			focus = append(focus, tag)
+		}
+	}
+	return block.AIContext{Tags: focus}.String()
 }
 
 // questionSlots is an ai-block's question list folded into the three parts
@@ -249,7 +278,7 @@ type questionTargets struct {
 // targets is THE target seam: which of blk's question elements name material it
 // is ABOUT. The fold's target slot and the chain walk both read it, so the
 // target predicate has exactly one home.
-func (p *AIBlockProcessor) targets(blk domain.SieveBlock, doc block.DocView) questionTargets {
+func (p *AIBlockProcessor) targets(blk domain.SieveBlock, doc block.ContainerView) questionTargets {
 	return p.foldQuestion(blk, doc).targets
 }
 
@@ -268,8 +297,8 @@ func (p *AIBlockProcessor) targets(blk domain.SieveBlock, doc block.DocView) que
 //
 // A list with no target element at all is a DETACHED question — one about
 // nothing — and is distinct from a question about the whole document.
-func (p *AIBlockProcessor) foldQuestion(blk domain.SieveBlock, doc block.DocView) questionSlots {
-	q := questionSlots{targets: questionTargets{own: domain.NewContainerAddress(doc.UUID)}}
+func (p *AIBlockProcessor) foldQuestion(blk domain.SieveBlock, doc block.ContainerView) questionSlots {
+	q := questionSlots{targets: questionTargets{own: domain.NewContainerAddress(doc.Container())}}
 	for _, el := range blk.Elements(block.QuestionAttr) {
 		switch {
 		case el.Kind != block.KindReference:
@@ -359,7 +388,7 @@ func (t questionTargets) names() string {
 // block.ContextSeries applies to its entries. A target elsewhere and the whole
 // document are always kept, as is a local ai-block, which always has a question.
 // Order is preserved.
-func (t questionTargets) shown(doc block.DocView) questionTargets {
+func (t questionTargets) shown(doc block.ContainerView) questionTargets {
 	out := questionTargets{own: t.own}
 	for _, el := range t.els {
 		token, local := t.localToken(el)
@@ -383,7 +412,7 @@ func (t questionTargets) shown(doc block.DocView) questionTargets {
 //
 // doc is forwarded to each provider as the snapshot it renders against; an
 // element is not in that tree, so a provider resolving ids finds nothing there.
-func (p *AIBlockProcessor) elementContexts(els []*domain.SieveBlock, doc block.DocView) []block.AIContext {
+func (p *AIBlockProcessor) elementContexts(els []*domain.SieveBlock, doc block.ContainerView) []block.AIContext {
 	out := make([]block.AIContext, 0, len(els))
 	for _, el := range els {
 		cp := block.GetContextProvider(el.Kind)
@@ -401,7 +430,7 @@ func (p *AIBlockProcessor) elementContexts(els []*domain.SieveBlock, doc block.D
 // questionText renders the body slot: the merged CONTENT of its elements. A
 // trailer is dropped with it — it belongs to the block it was extracted from,
 // not to the question asking about that block.
-func (p *AIBlockProcessor) questionText(body []*domain.SieveBlock, doc block.DocView) string {
+func (p *AIBlockProcessor) questionText(body []*domain.SieveBlock, doc block.ContainerView) string {
 	return block.MergeContexts(p.elementContexts(body, doc)).Content
 }
 
@@ -410,7 +439,7 @@ func (p *AIBlockProcessor) questionText(body []*domain.SieveBlock, doc block.Doc
 // QUESTION ABOUT / EXPLAIN NODE line stays in Content because it is a header before
 // the Q&A, not a mergeable trailer. Unlike the ACTION assembly (qaHeader) this DOES
 // append the block's own answer — a ref-chain / THREAD entry is conversation history.
-func (p *AIBlockProcessor) BuildContext(blk domain.SieveBlock, doc block.DocView, seen map[string]bool) block.AIContext {
+func (p *AIBlockProcessor) BuildContext(blk domain.SieveBlock, doc block.ContainerView, seen map[string]bool) block.AIContext {
 	t, _ := blk.Attrs["type"].(string)
 
 	sb := strings.Builder{}
@@ -459,11 +488,11 @@ type chainWalk struct {
 // The seen-guard keys on each node's CANONICAL ADDRESS rather than its bare
 // handle — a chain can name nodes in more than one container, where a bare
 // handle no longer identifies one — and makes cyclic graphs terminate.
-func (p *AIBlockProcessor) resolveChain(blk domain.SieveBlock, doc block.DocView) chainWalk {
+func (p *AIBlockProcessor) resolveChain(blk domain.SieveBlock, doc block.ContainerView) chainWalk {
 	var w chainWalk
 	seen := map[string]bool{}
 	if blk.ID != "" {
-		seen[domain.NewLeafAddress(doc.UUID, blk.ID).String()] = true
+		seen[domain.NewLeafAddress(doc.Container(), blk.ID).String()] = true
 	}
 	var descend func(t questionTargets)
 	descend = func(t questionTargets) {
@@ -483,12 +512,12 @@ func (p *AIBlockProcessor) resolveChain(blk domain.SieveBlock, doc block.DocView
 				w.local = append(w.local, token)
 				continue
 			}
-			child, ok := doc.GetBlock(token)
+			child, ok := doc.Block(token)
 			if !ok {
 				w.local = append(w.local, token)
 				continue
 			}
-			if next := p.targets(*child, doc); len(next.els) == 0 {
+			if next := p.targets(child, doc); len(next.els) == 0 {
 				w.local = append(w.local, token) // leaf → target
 			} else {
 				w.thread = append(w.thread, token) // interior → thread
@@ -515,7 +544,7 @@ func (p *AIBlockProcessor) resolveChain(blk domain.SieveBlock, doc block.DocView
 // resolves to nothing here, so it renders as the reference it is, carrying its own
 // kind, with no ADDRESS line (nothing here resolves its address); the model
 // dereferences it through the MCP verb if it needs the content.
-func (p *AIBlockProcessor) buildTargets(w chainWalk, doc block.DocView) string {
+func (p *AIBlockProcessor) buildTargets(w chainWalk, doc block.ContainerView) string {
 	var ctxs block.ContextSeries
 	// Exclude this processor's own kind: when a target is the whole doc, its derived
 	// markdown must not carry prior ai-block answers — an ai-block serializes as its
@@ -531,69 +560,118 @@ func (p *AIBlockProcessor) buildTargets(w chainWalk, doc block.DocView) string {
 	return ctxs.Blocks()
 }
 
-// buildPrompt assembles the three prompt slots from the immutable job snapshot,
-// splitting the ref graph by GEOMETRY (resolveChain):
+// exchangePrompt is an exchange's prompt assembled from the immutable job
+// snapshot, in the three slots both the ask and the chat tasks show:
 //
-//   - content — the TARGET: the terminal MANY of leaf nodes, the material being
-//     asked about.
-//   - history — the THREAD: the interior nodes oldest-first, each rendered as
-//     its own Q&A entry (NOT merged — distinct entries keeping their own
-//     trailers, and their own attachments) under a "===== TURN n of m ====="
-//     line, which is what separates one entry from the next.
-//   - question — the ACTION: this block's own question-side. It must NOT carry
-//     its own prior answer: on a retry the doc snapshot already holds a
-//     stale answer, and leaking it into the ACTION biases the new one. The ADDRESS
-//     header is preserved.
+//   - target — the TARGET (a chat's ABOUT): the chain's leaves less anything in
+//     the thread, rendered as numbered BLOCK entries (buildTargets).
+//   - thread — the THREAD, oldest first: what the container orders before the
+//     exchange as conversation, then the interior of its reference chain, each a
+//     Q&A entry's context headed by its address.
+//   - question — the ACTION (a chat's QUESTION): the exchange's own question-side
+//     under its ADDRESS header. It must NOT carry its own prior answer: on a retry
+//     the snapshot already holds a stale answer, and leaking it into the ACTION
+//     biases the new one.
 //
-// Split out of DescribeJob so the assembled prompt is assertable without running
-// a job or reaching a CLI.
-func (p *AIBlockProcessor) buildPrompt(blk *domain.SieveBlock, doc block.DocView) (content, history, question string) {
-	w := p.resolveChain(*blk, doc)
-
-	content = p.buildTargets(w, doc)
-
-	seen := map[string]bool{blk.ID: true}
-	var thread block.ContextSeries
-	for _, id := range w.thread {
-		// THREAD resolution is untouched (nil filter): interior nodes are ai-blocks
-		// resolved by id — the conversation history must keep prior answers verbatim.
-		thread = append(thread, block.BuildContextForID(id, doc, seen, nil))
-	}
-	history = thread.Turns()
-
-	question = doc.NodeContext(blk.ID, p.qaHeader(*blk, doc)).String()
-	return content, history, question
+// conversation says whether the container declared itself a conversation, which
+// makes the run the chat task.
+type exchangePrompt struct {
+	target       string
+	thread       []block.AIContext
+	question     string
+	conversation bool
 }
 
-// DescribeJob builds the prompt by walking this block's point-to-point ref graph and
-// splitting it by GEOMETRY (resolveChain): the terminal MANY of leaf nodes is the
-// TARGET (the content being asked about), the interior nodes are the THREAD (prior
-// Q&A / derivation history), and this block is the ACTION. Each node self-describes
-// through the registry (BuildContextForID), so dispatch stays kind-agnostic. The
-// prompt is assembled synchronously here (it needs the immutable jctx.Doc snapshot),
-// then captured by Work; Apply writes the success attrs. An ai-block always has
-// async work (born PENDING), so DescribeJob never returns nil. The error path
-// (status ERROR/TIMEOUT) is the framework's job in EditorService.finish, so Apply
-// is success-only.
+// chatData is the prompt as the chat task's data: each thread entry that says
+// something is a turn under its address, oldest first.
+func (e exchangePrompt) chatData() ai.ChatData {
+	data := ai.ChatData{About: e.target, Question: e.question}
+	for _, ctx := range e.thread {
+		if !ctx.Speaks() {
+			continue
+		}
+		address := strings.Join(ctx.Addresses, ",")
+		ctx.Addresses = nil
+		data.Turns = append(data.Turns, ai.ChatTurn{Address: address, Text: ctx.String()})
+	}
+	return data
+}
+
+// assemble builds blk's prompt, splitting its reference graph by GEOMETRY
+// (resolveChain) and taking the conversation the view orders before blk
+// (ContainerView.ConversationBefore). A container that orders no conversation
+// leaves the thread the chain's interior alone.
+func (p *AIBlockProcessor) assemble(blk *domain.SieveBlock, doc block.ContainerView) exchangePrompt {
+	w := p.resolveChain(*blk, doc)
+	earlier, conversation := doc.ConversationBefore(blk.ID)
+
+	inThread := map[string]bool{}
+	var threadIDs []string
+	for _, id := range append(append([]string(nil), earlier...), w.thread...) {
+		if !inThread[id] {
+			inThread[id] = true
+			threadIDs = append(threadIDs, id)
+		}
+	}
+	var leaves []string
+	for _, id := range w.local {
+		if !inThread[id] {
+			leaves = append(leaves, id)
+		}
+	}
+	w.local = leaves
+
+	e := exchangePrompt{target: p.buildTargets(w, doc), conversation: conversation}
+	seen := map[string]bool{blk.ID: true}
+	for _, id := range threadIDs {
+		// THREAD resolution is untouched (nil filter): the conversation history must
+		// keep prior answers verbatim.
+		e.thread = append(e.thread, block.BuildContextForID(id, doc, seen, nil))
+	}
+	e.question = doc.NodeContext(blk.ID, p.qaHeader(*blk, doc)).String()
+	return e
+}
+
+// buildPrompt is the ask and explain tasks' rendering of the assembled prompt:
+// the TARGET, the THREAD as numbered "===== TURN n of m =====" entries, and the
+// ACTION. Split out of DescribeJob so the assembled prompt is assertable without
+// running a job or reaching a CLI.
+func (p *AIBlockProcessor) buildPrompt(blk *domain.SieveBlock, doc block.ContainerView) (content, history, question string) {
+	e := p.assemble(blk, doc)
+	return e.target, block.ContextSeries(e.thread).Turns(), e.question
+}
+
+// DescribeJob builds the prompt (assemble) synchronously from the immutable
+// jctx.Doc snapshot and captures it in Work: the chat task's run when the view
+// declares a conversation, otherwise ask's or, for an EXPLAIN block, explain's.
+// Apply writes the success attrs. An ai-block always has async work (born
+// PENDING), so DescribeJob never returns nil. The error path (status
+// ERROR/TIMEOUT) is the framework's job in EditorService.finish, so Apply is
+// success-only.
 func (p *AIBlockProcessor) DescribeJob(jctx block.JobContext) *block.ProcessorJob {
 	blk := jctx.Block
-	uuid := jctx.UUID
 	blockType, _ := blk.Attrs["type"].(string)
+	e := p.assemble(blk, jctx.Doc)
+	ex := domain.Exchange{Container: jctx.UUID, Block: blk.ID}
 
-	content, history, questionCtx := p.buildPrompt(blk, jctx.Doc)
-
-	isExplain := blockType == "EXPLAIN"
-	ex := domain.Exchange{Container: uuid, Block: blk.ID}
+	var work func() (any, error)
+	if e.conversation {
+		data := e.chatData()
+		work = func() (any, error) { return p.svc.AI.RunChat(data, ex) }
+	} else {
+		history := block.ContextSeries(e.thread).Turns()
+		work = func() (any, error) {
+			if blockType == "EXPLAIN" {
+				return p.svc.AI.RunExplain(e.target, history, e.question, ex)
+			}
+			return p.svc.AI.RunAsk(e.target, history, e.question, ex)
+		}
+	}
 	return &block.ProcessorJob{
 		Category: block.CategoryAI,
 		Label:    p.aiBlockLabel(blk),
-		Work: func() (any, error) {
-			if isExplain {
-				return p.svc.AI.RunExplain(content, history, questionCtx, ex)
-			}
-			return p.svc.AI.RunAsk(content, history, questionCtx, ex)
-		},
-		Apply: p.settle,
+		Work:     work,
+		Apply:    p.settle,
 	}
 }
 
@@ -631,7 +709,7 @@ func (p *AIBlockProcessor) settle(result any, b *domain.SieveBlock) {
 // the exchange is titled by its answer's position instead.
 func (p *AIBlockProcessor) MarkdownRepresentation(blk domain.SieveBlock, uuid string) string {
 	status, _ := blk.Attrs["status"].(string)
-	doc := block.DocView{UUID: uuid}
+	doc := block.DocView{ContainerAddressing: block.ContainerAddressing{UUID: uuid}}
 	answer := p.answerText(blk, doc)
 	if status != block.BlockStatusComplete || answer == "" {
 		return ""

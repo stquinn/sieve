@@ -294,6 +294,80 @@ describe('ReferenceRenderer — double click opens, and names no mechanism', () 
   })
 })
 
+describe('ReferenceRenderer — drawn as a quote', () => {
+  /** A target reference drawn as a quote, its quoted text in the cache. */
+  const QUOTE = {
+    id: 'ref-3', uri: 'sieve://0198c1a0-0000-7000-8000-0000000000c1/0198c1a0-0000-7000-8000-0000000000e1',
+    rel: 'target', displayAs: ReferenceRenderer.DisplayAs.QUOTE,
+    cache: { [ReferenceRenderer.QUOTE_KEY]: 'look:\n```go\nx := 1' },
+    status: 'COMPLETE', error: '', createdAt: '2026-08-19T10:00:00Z',
+  }
+  const quoteOf = (/** @type {HTMLElement} */ dom) => /** @type {HTMLElement|null} */ (dom.querySelector('.reference-block__quote'))
+
+  it('draws a blockquote of the quoted text as plain text, a fence included, and no chip', () => {
+    const { dom } = mount(QUOTE)
+    const quote = /** @type {HTMLElement} */ (quoteOf(dom))
+    expect(quote.tagName).toBe('BLOCKQUOTE')
+    expect(quote.textContent).toBe('look:\n```go\nx := 1')
+    expect(quote.children.length).toBe(0)
+    expect(chipOf(dom)).toBeNull()
+    expect(chevronOf(dom)).toBeNull()
+    expect(dom.classList.contains('reference-block--quote')).toBe(true)
+  })
+
+  it.each([
+    ['its target has no cached title', {}, 'Quoted'],
+    ['its target has a cached title', { title: 'Why does it panic?' }, 'Quoted from Why does it panic?'],
+  ])('says where it is from in its tooltip alone when %s', (_name, face, said) => {
+    const { dom } = mount(withFace(QUOTE, face))
+    expect(quoteOf(dom)?.title).toBe(said)
+    expect(dom.textContent).not.toContain('Quoted')
+  })
+
+  it.each([
+    ['no displayAs', { displayAs: undefined }],
+    ['a displayAs it does not know', { displayAs: 'card' }],
+    ['an empty displayAs', { displayAs: '' }],
+  ])('a reference with %s draws its chip, whatever its cache holds', (_name, patch) => {
+    const { dom } = mount({ ...QUOTE, ...patch })
+    expect(quoteOf(dom)).toBeNull()
+    expect(chipOf(dom)).not.toBeNull()
+    expect(dom.classList.contains('reference-block--quote')).toBe(false)
+  })
+
+  it('a render-back moves the block between its two faces', () => {
+    const { renderer, dom } = mount(QUOTE)
+    renderer.update(blk({ ...QUOTE, displayAs: '' }))
+    expect([!!quoteOf(dom), !!chipOf(dom)]).toEqual([false, true])
+    renderer.update(blk(QUOTE))
+    expect([!!quoteOf(dom), !!chipOf(dom)]).toEqual([true, false])
+  })
+
+  it('double click opens what it quotes, as any reference does, seeking there the text it quotes', () => {
+    const { renderer, dom } = mount(QUOTE)
+    /** @type {any[]} */ const opened = []
+    renderer.onOpen((target) => opened.push(target))
+    dblclick(/** @type {HTMLElement} */ (quoteOf(dom)))
+    expect(opened).toEqual([{ uri: QUOTE.uri, title: QUOTE.uri, held: false, seek: 'look:\n```go\nx := 1' }])
+  })
+
+  it.each([
+    ['drawn as a quote: the text it quotes', QUOTE, 'look:\n```go\nx := 1'],
+    ['not drawn as one: nothing, whatever its cache holds', { ...QUOTE, displayAs: '' }, undefined],
+    ['drawn as a quote of blank text: nothing', withFace(QUOTE, { [ReferenceRenderer.QUOTE_KEY]: '  ' }), undefined],
+  ])('targetFor a reference %s is what it seeks', (_name, payload, seek) => {
+    const target = /** @type {import('../src/static/renderers/reference-renderer.js').ReferenceTarget} */ (ReferenceRenderer.targetFor(payload))
+    expect(target.uri).toBe(QUOTE.uri)
+    expect(target.seek).toBe(seek)
+    expect('seek' in target).toBe(seek !== undefined)
+  })
+
+  it('reads its quote only when drawn as one', () => {
+    expect(ReferenceRenderer.quoteOf(QUOTE)).toBe('look:\n```go\nx := 1')
+    expect(ReferenceRenderer.quoteOf({ ...QUOTE, displayAs: '' })).toBe('')
+  })
+})
+
 describe('ReferenceRenderer — the stylesheet', () => {
   // No clearing here: the registry's register-once set is a module singleton, so
   // emptying document.adoptedStyleSheets would prove nothing (the second

@@ -1,7 +1,9 @@
 package ai
 
 import (
+	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"sieve/sieve/command"
@@ -39,6 +41,20 @@ func newPopupAnswer(aiSvc *AIService, docs *services.DocumentService) popupAnswe
 func (p popupAnswer) available() error {
 	if p.ai == nil || p.ai.Tier() == domain.TierDumb {
 		return fmt.Errorf("AI commands are unavailable — configure an AI CLI in Settings")
+	}
+	return nil
+}
+
+// readsDocument is the precondition of a command whose prompt reads "the
+// provided text or document": an invocation with no selection from a container
+// that is not a document, such as a chat, has nothing for it to read and is
+// refused in name's words. Any other invocation passes, as it always has.
+func (p popupAnswer) readsDocument(name string, ctx command.Context) error {
+	if strings.TrimSpace(ctx.SelectedText) != "" || ctx.DocUUID == "" || p.docs == nil {
+		return nil
+	}
+	if _, err := p.docs.LoadByUUID(ctx.DocUUID); errors.Is(err, domain.ErrNotADocument) {
+		return fmt.Errorf("/%s reads a document or a selection, and this is not a document", name)
 	}
 	return nil
 }

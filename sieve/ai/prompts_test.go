@@ -202,7 +202,7 @@ func TestNewPromptService_RemovesOldOverrides(t *testing.T) {
 	}
 }
 
-// The ten tasks are declared once, in the order the Prompts dialog lists them,
+// The eleven tasks are declared once, in the order the Prompts dialog lists them,
 // each with its display name, its output and its brief, which carries no
 // placeholder and nothing of what the framework says.
 //
@@ -224,10 +224,12 @@ func TestPromptService_DeclaresTheTasks(t *testing.T) {
 		{"file", "Smart Filing", Data, DefaultFilingPrompt},
 		{"explain", "Explain Content", Content, DefaultExplainPrompt},
 		{"ask", "In-context Chat", Content, DefaultAskPrompt},
+		{"chat", "Chat", Content, DefaultChatPrompt},
 		{"btw", "Quick Answer (/btw)", Content, DefaultBtwPrompt},
 		{"refine", "Language Detection", Data, DefaultRefinePrompt},
 		{"image", "Describe Image", Data, DefaultImagePrompt},
 		{"note-meta", "Name Handwritten Note", Data, DefaultNoteMetaPrompt},
+		{"chat-meta", "Name Chat", Data, DefaultChatMetaPrompt},
 		{"page-transcript", "Transcribe Handwritten Page", Data, DefaultPageTranscriptPrompt},
 		{"web-clip-fetch", "Web Clip — Fetch", Data, DefaultWebClipFetchPrompt},
 		{"web-clip-summarise", "Web Clip — Summarise", Data, DefaultWebClipSummarisePrompt},
@@ -369,12 +371,17 @@ func TestTaskData_RendersEveryValueVerbatim(t *testing.T) {
 			[]string{"Existing folders: (none yet)", "- Created: unknown", "- Modified: unknown", "- Focus Signal: 0", "- Iteration: 1"}},
 		{"ask and explain", ThreadData{ContentType: "go", Content: verbatim, History: "the thread", Action: "the action {content}"},
 			[]string{"Content type: go", "TARGET:\n" + verbatim, "THREAD:\nthe thread", "ACTION:\nthe action {content}"}},
+		{"chat", ChatData{Turns: []ChatTurn{{Address: "sieve://c/e1", Text: verbatim}}, About: "the material {content}", Question: "the question {history}"},
+			[]string{"THREAD:\n===== TURN 1 =====\nADDRESS: sieve://c/e1\n" + verbatim, "ABOUT:\nthe material {content}", "QUESTION:\nthe question {history}"}},
 		{"btw", BtwData{Question: verbatim, Selection: "the selection", DocTitle: "My Doc", DocSummary: "a summary"},
 			[]string{"QUESTION:\n" + verbatim, "SELECTED TEXT:\nthe selection", "- Document title: My Doc", "- Document summary: a summary"}},
 		{"image", ImageData{File: "shot {content}.png"}, []string{"Image file: shot {content}.png"}},
 		{"note-meta", NoteMetaData{Pages: []string{"page-b-2.png", "page-a-1.png"}, Categories: []string{"Home", "Work"}},
 			[]string{"Page files:\n1. page-b-2.png\n2. page-a-1.png", "Categories: Home, Work"}},
 		{"note-meta, with no categories", NoteMetaData{Pages: []string{"page-1.png"}}, []string{"Categories: (none)"}},
+		{"chat-meta", ChatMetaData{Turns: []string{verbatim, "And a turn?\n\n**ANSWER:** One exchange."}, Categories: []string{"Home", "Work"}},
+			[]string{"THREAD:\n===== TURN 1 =====\n" + verbatim + "\n\n===== TURN 2 =====\nAnd a turn?", "---\n---\n\nCategories: Home, Work"}},
+		{"chat-meta, with no categories", ChatMetaData{Turns: []string{verbatim}}, []string{"Categories: (none)"}},
 		{"page-transcript", PageTranscriptData{File: "page-p1-k1.png"}, []string{"Page file: page-p1-k1.png"}},
 		{"refine", RefineData{Content: verbatim, CurrentLanguage: "go", DetectionMethod: "heuristic"},
 			[]string{"- Current Language: go", "- Detection Method: heuristic", "Code:\n" + verbatim}},
@@ -392,6 +399,35 @@ func TestTaskData_RendersEveryValueVerbatim(t *testing.T) {
 			prompt := ps.Prompt(Task{Brief: Layer{Heading: briefHeading, Text: "the brief"}}, tc.data, "", false)
 			if prompt.Data != (Layer{Heading: dataHeading, Text: text}) || !strings.HasSuffix(prompt.String(), "# Data\n\n"+strings.TrimSpace(text)) {
 				t.Errorf("the prompt does not end with the data verbatim:\n%s", prompt)
+			}
+		})
+	}
+}
+
+// A chat's data prints THREAD, ABOUT and QUESTION in that order, a section only
+// when it has content, each turn under its own number and address; a turn's
+// printed text is the same whatever turns follow it.
+func TestChatData_PrintsEachSectionOnlyWhenItHasContent(t *testing.T) {
+	first := ChatTurn{Address: "sieve://c/e1", Text: "What is a chat?\n\n**ANSWER:** A list."}
+	second := ChatTurn{Address: "sieve://c/e2", Text: "And a turn?\n\n**ANSWER:** One exchange."}
+	printedFirst := "===== TURN 1 =====\nADDRESS: sieve://c/e1\n" + first.Text
+	printedSecond := "===== TURN 2 =====\nADDRESS: sieve://c/e2\n" + second.Text
+	const rule = "\n\n---\n---\n\n"
+	for _, tc := range []struct {
+		name string
+		data ChatData
+		want string
+	}{
+		{"a first question", ChatData{Question: "the question"}, "QUESTION:\nthe question"},
+		{"a question about material", ChatData{About: "the block", Question: "the question"}, "ABOUT:\nthe block" + rule + "QUESTION:\nthe question"},
+		{"a follow-up", ChatData{Turns: []ChatTurn{first}, About: "  ", Question: "the question"},
+			"THREAD:\n" + printedFirst + rule + "QUESTION:\nthe question"},
+		{"every section", ChatData{Turns: []ChatTurn{first, second}, About: "the block", Question: "the question"},
+			"THREAD:\n" + printedFirst + "\n\n" + printedSecond + rule + "ABOUT:\nthe block" + rule + "QUESTION:\nthe question"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.data.Text(); got != tc.want {
+				t.Errorf("Text() =\n%s\nwant\n%s", got, tc.want)
 			}
 		})
 	}

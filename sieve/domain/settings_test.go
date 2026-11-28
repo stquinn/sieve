@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 )
 
 // ResolveCLI splits the CLI setting into the executable to spawn (binary) and the
@@ -112,6 +113,7 @@ func TestLookAndFeel_Overrides_SetFields(t *testing.T) {
 		EditorLineHeight:    "1.6",
 		EditorMeasure:       "72ch",
 		PresentationMeasure: "100ch",
+		ChatMeasure:         "88ch",
 	}
 	got := l.Overrides()
 	want := map[string]string{
@@ -122,6 +124,7 @@ func TestLookAndFeel_Overrides_SetFields(t *testing.T) {
 		"editorLineHeight":    "1.6",
 		"editorMeasure":       "72ch",
 		"presentationMeasure": "100ch",
+		"chatMeasure":         "88ch",
 	}
 	if len(got) != len(want) {
 		t.Fatalf("Overrides() = %v, want %v", got, want)
@@ -237,6 +240,7 @@ func TestLookAndFeel_ValidMeasure(t *testing.T) {
 	fields := map[string]func(string) LookAndFeel{
 		"editorMeasure":       func(v string) LookAndFeel { return LookAndFeel{EditorMeasure: v} },
 		"presentationMeasure": func(v string) LookAndFeel { return LookAndFeel{PresentationMeasure: v} },
+		"chatMeasure":         func(v string) LookAndFeel { return LookAndFeel{ChatMeasure: v} },
 	}
 	for key, build := range fields {
 		for _, c := range cases {
@@ -262,6 +266,7 @@ func TestLookAndFeel_Overrides_RejectsInjectionAttempts(t *testing.T) {
 		EditorLineHeight:    `1.5"; } body { display:none`,
 		EditorMeasure:       "72ch; } body { display:none",
 		PresentationMeasure: `100ch"}body{display:none`,
+		ChatMeasure:         "100ch;}",
 	}
 	got := l.Overrides()
 	if len(got) != 0 {
@@ -304,7 +309,7 @@ func TestLookAndFeel_StepEditorScale(t *testing.T) {
 // feature (no look_and_feel key at all) must still parse to the zero value —
 // backwards compatibility for existing settings files.
 func TestParseSettings_LookAndFeelRoundTrip(t *testing.T) {
-	loaded := ParseSettings([]byte(`{"look_and_feel":{"editor_scale":"1.25","editor_measure":"72ch","presentation_measure":"100ch"}}`))
+	loaded := ParseSettings([]byte(`{"look_and_feel":{"editor_scale":"1.25","editor_measure":"72ch","presentation_measure":"100ch","chat_measure":"90ch"}}`))
 	if loaded.LookAndFeel.EditorScale != "1.25" {
 		t.Errorf("LookAndFeel.EditorScale = %q, want 1.25", loaded.LookAndFeel.EditorScale)
 	}
@@ -313,6 +318,9 @@ func TestParseSettings_LookAndFeelRoundTrip(t *testing.T) {
 	}
 	if loaded.LookAndFeel.PresentationMeasure != "100ch" {
 		t.Errorf("LookAndFeel.PresentationMeasure = %q, want 100ch", loaded.LookAndFeel.PresentationMeasure)
+	}
+	if loaded.LookAndFeel.ChatMeasure != "90ch" {
+		t.Errorf("LookAndFeel.ChatMeasure = %q, want 90ch", loaded.LookAndFeel.ChatMeasure)
 	}
 }
 
@@ -562,22 +570,44 @@ func TestSettings_WithSpellcheckPersistsBothAnswers(t *testing.T) {
 	}
 }
 
-func TestParseSettings_InkRoundTrip(t *testing.T) {
-	for _, want := range []InkSettings{
+// The ink and chat objects round-trip whole, each independent of the other, and a file without one
+// reads it empty, so its settle time is the default.
+func TestParseSettings_InkAndChatRoundTrip(t *testing.T) {
+	for _, want := range []struct {
+		ink  InkSettings
+		chat ChatSettings
+	}{
 		{},
-		{Enabled: true, Key: "MFRG GZDF MZTW Q2LK", TCP: "127.0.0.1:7777"},
+		{ink: InkSettings{Enabled: true, Key: "MFRG GZDF MZTW Q2LK", TCP: "127.0.0.1:7777", SettleSeconds: 30}},
+		{chat: ChatSettings{SettleSeconds: 90}},
+		{ink: InkSettings{SettleSeconds: 30}, chat: ChatSettings{SettleSeconds: 600}},
 	} {
 		s := DefaultSettings()
-		s.Ink = want
+		s.Ink, s.Chat = want.ink, want.chat
 		data, err := s.Marshal()
 		if err != nil {
 			t.Fatalf("Marshal: %v", err)
 		}
-		if got := ParseSettings(data).Ink; got != want {
-			t.Errorf("round trip of %+v read back as %+v", want, got)
+		if got := ParseSettings(data); got.Ink != want.ink || got.Chat != want.chat {
+			t.Errorf("round trip of %+v read back as %+v, %+v", want, got.Ink, got.Chat)
 		}
 	}
-	if got := ParseSettings([]byte(`{"theme":"nord"}`)).Ink; got != (InkSettings{}) {
-		t.Errorf("a file without ink reads %+v", got)
+	got := ParseSettings([]byte(`{"theme":"nord"}`))
+	if got.Ink != (InkSettings{}) || got.Chat != (ChatSettings{}) {
+		t.Errorf("a file without ink or chat reads %+v, %+v", got.Ink, got.Chat)
+	}
+	for _, tc := range []struct {
+		settle, want time.Duration
+	}{
+		{got.Ink.Settle(), DefaultInkSettle},
+		{got.Chat.Settle(), DefaultChatSettle},
+		{ChatSettings{SettleSeconds: 90}.Settle(), 90 * time.Second},
+	} {
+		if tc.settle != tc.want {
+			t.Errorf("settle = %v, want %v", tc.settle, tc.want)
+		}
+	}
+	if DefaultChatSettle != 5*time.Minute {
+		t.Errorf("a chat settles by default after %v, want five minutes", DefaultChatSettle)
 	}
 }

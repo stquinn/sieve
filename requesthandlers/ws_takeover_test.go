@@ -86,7 +86,12 @@ func newWsTestServerOver(t *testing.T, debounce time.Duration, jobs JobsSource, 
 	}
 	es.SetContainers(containers)
 	containers.SetChangeListener(es)
-	sp := &sieve.ServiceProvider{Store: fs, Documents: ds, Containers: containers, Editor: es, State: st}
+	chats, err := services.NewChatService(fs, block.NewChatCodec(block.GlobalRegistry()))
+	if err != nil {
+		t.Fatalf("NewChatService: %v", err)
+	}
+	es.SetChats(chats)
+	sp := &sieve.ServiceProvider{Store: fs, Documents: ds, Containers: containers, Chats: chats, Editor: es, State: st}
 	// The composition root's own wiring, minus the settings read: every producer
 	// the app registers, spelling switched on, and the editor observing the engine
 	// back. Registration goes through the root's own method so a producer added
